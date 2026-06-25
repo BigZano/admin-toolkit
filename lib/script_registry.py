@@ -202,4 +202,4 @@ class ScriptRegistry:
         name = re.sub(r"\b(script|ps1)\b", "", name, flags=re.IGNORECASE).strip()
         name = re.sub(r"(?<!^)(?=[A-Z])", " ", name)
         acronyms = {"mfa": "MFA", "mg": "Mg", "upn": "UPN", "sku": "SKU", "graph": "Graph"}
-        return "".join(acronyms.get(w.lower(), w.capitalize()) for w in name.split())
+        return " ".join(acronyms.get(w.lower(), w.capitalize()) for w in name.split())
