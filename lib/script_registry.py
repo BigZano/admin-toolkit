@@ -141,7 +141,6 @@ class ScriptRegistry:
             "Computer Name": "Computer Name (hostname or FQDN)",
             "Days Inactive": "Days Inactive (default: 90)",
             "Days Until Expiry": "Days Until Expiry warning threshold (default: 30)",
-            "Disabled Users O U": "Disabled Users OU (Distinguished Name, optional)",
             "Report Type": "Report Type (HTML, XML, or Both)",
             "Recursive": "Recursive expansion (true/false)",
             "Force Change At Logon": "Force password change at next logon (true/false)",
@@ -170,6 +169,19 @@ class ScriptRegistry:
             "Filter Status": "Filter services by status (Running, Stopped, blank = all)",
             "Warn Threshold Pct": "Warning threshold percent used (default: 80)",
             "Crit Threshold Pct": "Critical threshold percent used (default: 90)",
+            "First Name": "First Name",
+            "Last Name": "Last Name",
+            "Title": "Job Title (optional)",
+            "Department": "Department (optional)",
+            "Target O U": "Target OU (Distinguished Name, blank = default Users OU)",
+            "Template User": "Template User (SAM account name to copy groups from, optional)",
+            "Source User": "Source User (SAM account name — copy groups FROM this user)",
+            "Target User": "Target User (SAM account name — copy groups TO this user)",
+            "Disabled O U": "Disabled OU (Distinguished Name, optional — e.g. OU=Disabled,DC=domain,DC=com)",
+            "O O O Message": "Out-of-Office Message (optional — set on mailbox during offboarding)",
+            "Service Name": "Service Name (Windows service name, e.g. Spooler)",
+            "Wait Seconds": "Seconds to wait after service restart (default: 30)",
+            "Printer Name": "Printer Name (optional — blank clears all printers on the machine)",
         }
         return replacements.get(spaced, spaced)
 
