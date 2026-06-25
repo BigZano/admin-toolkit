@@ -145,6 +145,21 @@ class ScriptRegistry:
             "Report Type": "Report Type (HTML, XML, or Both)",
             "Recursive": "Recursive expansion (true/false)",
             "Force Change At Logon": "Force password change at next logon (true/false)",
+            "Path": "Path (folder or drive to scan)",
+            "Min Size M B": "Minimum file size in MB (default: 100)",
+            "Depth": "Folder depth to report (default: 1)",
+            "Days Old": "Files not modified in X days (default: 365)",
+            "Recurse": "Recurse into subdirectories (true/false)",
+            "Targets": "Host(s) to test — hostname, IP, comma-separated, or path to .txt file",
+            "Count": "Number of ping attempts (default: 4)",
+            "Port": "Port number(s) — single, comma-separated, or range (e.g. 80,443 or 1-1024)",
+            "Port Range": "Port range — 'common', range (e.g. 1-1024), or comma-separated",
+            "Timeout Seconds": "Connection timeout in seconds (default: 3)",
+            "Record Type": "DNS record type (A, AAAA, MX, NS, CNAME, TXT, PTR, SOA, ALL)",
+            "D N S Server": "DNS server to query (blank = system default)",
+            "D H C P Server": "DHCP server hostname or IP",
+            "Scope Id": "DHCP scope ID to filter (blank = all scopes)",
+            "Disabled Users O U": "Disabled Users OU Distinguished Name (optional, e.g. OU=Disabled,DC=domain,DC=com)",
         }
         return replacements.get(spaced, spaced)
 
