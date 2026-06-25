@@ -132,9 +132,19 @@ class ScriptRegistry:
             "User Principal Name": "User Principal Name (Email)",
             "Usage Location": "Usage Location (2-letter country code)",
             "Password": "Password (min 8 characters)",
+            "New Password": "New Password (min 8 chars, upper/lower/number)",
             "License Index": "License Index (0 to skip, or number from list)",
             "Target User Email": "Target User Email",
             "Mailbox Type": "Mailbox Type (All, UserMailbox, SharedMailbox, etc.)",
+            "Username": "Username (SAM account name)",
+            "Group Name": "Group Name (AD group name)",
+            "Computer Name": "Computer Name (hostname or FQDN)",
+            "Days Inactive": "Days Inactive (default: 90)",
+            "Days Until Expiry": "Days Until Expiry warning threshold (default: 30)",
+            "Disabled Users O U": "Disabled Users OU (Distinguished Name, optional)",
+            "Report Type": "Report Type (HTML, XML, or Both)",
+            "Recursive": "Recursive expansion (true/false)",
+            "Force Change At Logon": "Force password change at next logon (true/false)",
         }
         return replacements.get(spaced, spaced)
 
