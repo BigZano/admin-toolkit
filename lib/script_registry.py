@@ -160,6 +160,16 @@ class ScriptRegistry:
             "D H C P Server": "DHCP server hostname or IP",
             "Scope Id": "DHCP scope ID to filter (blank = all scopes)",
             "Disabled Users O U": "Disabled Users OU Distinguished Name (optional, e.g. OU=Disabled,DC=domain,DC=com)",
+            "Computer List": "Computer(s) — hostname, comma-separated, or path to .txt file (blank = localhost)",
+            "Hours Back": "Hours of history to search (default: 24)",
+            "Brute Force Threshold": "Failure count to flag as brute force (default: 10)",
+            "Include Admin Shares": "Include hidden admin shares C$, ADMIN$, etc. (true/false)",
+            "Direction": "Firewall rule direction (Inbound or Outbound)",
+            "Enabled Only": "Show only enabled rules (true/false)",
+            "Filter Name": "Filter software by name (partial match, blank = all)",
+            "Filter Status": "Filter services by status (Running, Stopped, blank = all)",
+            "Warn Threshold Pct": "Warning threshold percent used (default: 80)",
+            "Crit Threshold Pct": "Critical threshold percent used (default: 90)",
         }
         return replacements.get(spaced, spaced)
 
