@@ -1,0 +1,35 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# UV lock file
+uv.lock
+
+# Bundled PowerShell runtime (large files)
+bundled/
+
+# Output reports
+Documents/
+M365Reports/
+internal/
+
+# Temporary and build files
+*.zip
+*.tar.gz
+*.log
+*.csv
+
+# OS-specific
+.DS_Store
+Thumbs.db
+SCRIPT_MODIFICATION_GUIDE_CORRECTED.md
+main.py.backup
+
+

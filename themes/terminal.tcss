@@ -1,0 +1,398 @@
+/* Microsoft 365 Admin TUI - Terminal Style Theme */
+
+/* ============================================================================
+   MAIN SCREEN LAYOUT - 4 Panel Grid
+   ============================================================================ */
+
+Screen {
+    background: #0f1a14;
+    layout: grid;
+    grid-size: 2 3;
+    grid-rows: 1fr 1fr 3;
+    grid-columns: 1fr 2fr;
+}
+
+/* Script List Panel - Top Left */
+#script-list-panel {
+    row-span: 2;
+    column-span: 1;
+    border: solid #2d8659;
+    background: #0f1a14;
+    padding: 0;
+}
+
+#script-list-title {
+    background: #1a5c3a;
+    color: #e2e8f0;
+    text-align: center;
+    text-style: bold;
+    padding: 0 1;
+    dock: top;
+}
+
+#script-list {
+    height: 100%;
+    scrollbar-background: #0f1a14;
+    scrollbar-color: #2d8659;
+}
+
+/* Script List Items */
+.script-item {
+    padding: 0 1;
+    color: #e2e8f0;
+    background: transparent;
+}
+
+.script-item-selected {
+    background: #2d8659;
+    color: #0f1a14;
+    text-style: bold;
+}
+
+.script-item-has-switch {
+    color: #ffb627;
+}
+
+/* Output Panel - Top Right (PRESERVE SIZE & POSITION) */
+#output-panel {
+    row-span: 2;
+    column-span: 1;
+    border: solid #ff6b35;
+    background: #0f1a14;
+    padding: 0;
+}
+
+#output-title {
+    background: #ff6b35;
+    color: #0f1a14;
+    text-align: center;
+    text-style: bold;
+    padding: 0 1;
+    dock: top;
+}
+
+#output-content {
+    height: 100%;
+    padding: 1;
+    color: #e2e8f0;
+    scrollbar-background: #0f1a14;
+    scrollbar-color: #ff6b35;
+}
+
+/* Output Status Colors */
+.output-ready {
+    color: #7a8a7f;
+    text-style: italic;
+}
+
+.output-prompt {
+    color: #ffb627;
+    text-style: bold;
+}
+
+.output-running {
+    color: #ffb627;
+}
+
+.output-success {
+    color: #2d8659;
+}
+
+.output-error {
+    color: #d93a2b;
+}
+
+.output-info {
+    color: #c9a961;
+}
+
+/* Hot Key Bar - Bottom Full Width */
+#hotkey-bar {
+    column-span: 2;
+    border: solid #c9a961;
+    background: #0f1a14;
+    height: 3;
+    padding: 0 1;
+    content-align: center middle;
+}
+
+.hotkey-text {
+    color: #c9a961;
+    text-style: bold;
+}
+
+.hotkey-key {
+    color: #ffb627;
+    text-style: bold;
+}
+
+.hotkey-separator {
+    color: #7a8a7f;
+}
+
+/* ============================================================================
+   SCRIPT DESCRIPTION OVERLAY
+   ============================================================================ */
+
+#description-overlay {
+    align: center middle;
+    background: $background 90%;
+}
+
+#description-container {
+    width: 60;
+    height: auto;
+    max-height: 20;
+    border: thick #2d8659;
+    background: #0f1a14;
+    padding: 1 2;
+}
+
+#description-title {
+    color: #2d8659;
+    text-style: bold;
+    text-align: center;
+    padding-bottom: 1;
+    border-bottom: solid #1a5c3a;
+}
+
+#description-text {
+    color: #e2e8f0;
+    padding: 1 0;
+}
+
+#description-params {
+    color: #c9a961;
+    text-style: italic;
+    padding-top: 1;
+    border-top: solid #7a8a7f;
+}
+
+/* ============================================================================
+   CONFIRMATION MODAL - Terminal Style
+   ============================================================================ */
+
+ModalScreen {
+    align: center middle;
+    background: $background 85%;
+}
+
+#confirm-dialog {
+    width: 70;
+    height: 20;
+    border: thick #ff6b35;
+    background: #0f1a14;
+    padding: 0;
+}
+
+#confirm-title {
+    color: #ffb627;
+    text-style: bold;
+    text-align: center;
+    padding: 1;
+    border-bottom: solid #ff6b35;
+    background: #0f1a14;
+    dock: top;
+}
+
+#confirm-dialog ScrollableContainer {
+    height: 1fr;
+    padding: 1 2;
+}
+
+#confirm-content {
+    color: #e2e8f0;
+    padding: 0;
+    width: 100%;
+}
+
+#confirm-buttons {
+    height: 3;
+    dock: bottom;
+    background: #0f1a14;
+    padding: 1 0;
+}
+
+.param-line {
+    color: #c9a961;
+    margin: 0 0 0 1;
+}
+
+.param-label {
+    color: #2d8659;
+    text-style: bold;
+}
+
+.param-value {
+    color: #e2e8f0;
+}
+
+#confirm-buttons {
+    margin-top: 2;
+    height: auto;
+    align: center middle;
+}
+
+Button {
+    margin: 0 1;
+    min-width: 15;
+    border: solid #1a5c3a;
+    background: #0f1a14;
+    color: #2d8659;
+}
+
+Button:hover {
+    background: #1a5c3a;
+    color: #e2e8f0;
+}
+
+Button:focus {
+    border: thick #ff6b35;
+    background: #2d8659;
+    color: #0f1a14;
+    text-style: bold;
+}
+
+Button.-primary {
+    border: solid #ff6b35;
+    color: #ff6b35;
+}
+
+Button.-primary:hover {
+    background: #ff6b35;
+    color: #0f1a14;
+}
+
+Button.-danger {
+    border: solid #d93a2b;
+    color: #d93a2b;
+}
+
+Button.-danger:hover {
+    background: #d93a2b;
+    color: #e2e8f0;
+}
+
+/* ============================================================================
+   SWITCHES MENU MODAL
+   ============================================================================ */
+
+#switches-dialog {
+    width: 70;
+    height: 20;
+    border: thick #c9a961;
+    background: #0f1a14;
+    padding: 0;
+}
+
+#switches-title {
+    color: #c9a961;
+    text-style: bold;
+    text-align: center;
+    padding: 1;
+    border-bottom: solid #c9a961;
+    background: #0f1a14;
+    dock: top;
+}
+
+#switches-dialog ScrollableContainer {
+    height: 100%;
+    padding: 1 2;
+}
+
+.switch-option {
+    color: #ffb627;
+    padding: 0;
+    margin: 0;
+    width: 100%;
+    height: auto;
+    min-height: 15;
+}
+
+.switch-option-key {
+    color: #ffb627;
+    text-style: bold;
+    padding: 0;
+    margin: 0;
+    width: 100%;
+}
+
+.switch-option-desc {
+    color: #c9a961;
+    padding: 0;
+    margin: 0;
+    width: 100%;
+}
+
+.switch-hint {
+    color: #7a8a7f;
+    text-style: italic;
+}
+
+/* ============================================================================
+   INPUT FIELD STYLING
+   ============================================================================ */
+
+Input {
+    background: #0f1a14;
+    border: tall #1a5c3a;
+    color: #e2e8f0;
+    padding: 0 1;
+}
+
+Input:focus {
+    border: tall #ff6b35;
+    background: rgba(26, 92, 58, 0.1);
+}
+
+Input.-invalid {
+    border: tall #d93a2b;
+}
+
+/* ============================================================================
+   SCROLLBAR STYLING
+   ============================================================================ */
+
+ScrollableContainer {
+    scrollbar-background: #0f1a14;
+    scrollbar-color: #2d8659;
+    scrollbar-color-hover: #ff6b35;
+    scrollbar-color-active: #ffb627;
+}
+
+/* ============================================================================
+   LOADING INDICATOR
+   ============================================================================ */
+
+LoadingIndicator {
+    color: #ffb627;
+}
+
+/* ============================================================================
+   UTILITY CLASSES
+   ============================================================================ */
+
+.hidden {
+    display: none;
+}
+
+.highlight {
+    background: #2d8659;
+    color: #0f1a14;
+}
+
+.muted {
+    color: #7a8a7f;
+}
+
+.warning {
+    color: #ffb627;
+}
+
+.error {
+    color: #d93a2b;
+}
+
+.success {
+    color: #2d8659;
+}

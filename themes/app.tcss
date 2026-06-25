@@ -1,0 +1,194 @@
+/* Microsoft 365 Admin TUI - Main Application Styles */
+
+/* ============================================================================
+   MAIN SCREEN LAYOUT
+   ============================================================================ */
+
+Screen {
+    background: $surface;
+}
+
+#main-container {
+    height: 100%;
+    padding: 1;
+}
+
+/* ============================================================================
+   HEADER SECTION
+   ============================================================================ */
+
+#header-section {
+    height: auto;
+    background: $surface-lighten-1;
+    border: solid $primary;
+    padding: 1 2;
+    margin-bottom: 2;
+}
+
+.app-title {
+    text-align: center;
+    text-style: bold;
+    color: $text;
+    background: $primary;
+    padding: 0 2;
+    margin-bottom: 1;
+}
+
+.app-subtitle {
+    text-align: center;
+    color: $text-muted;
+}
+
+.info-text {
+    text-align: center;
+    color: $secondary;
+    text-style: italic;
+    margin-top: 1;
+}
+
+/* ============================================================================
+   MENU SECTION
+   ============================================================================ */
+
+#menu-section {
+    height: auto;
+    padding: 0 4;
+    margin-bottom: 2;
+}
+
+.section-title {
+    text-style: bold;
+    color: $accent;
+    border-bottom: solid $accent;
+    margin-bottom: 1;
+    padding-bottom: 0;
+}
+
+.menu-buttons {
+    height: auto;
+}
+
+/* ============================================================================
+   SWITCHES SECTION
+   ============================================================================ */
+
+#switches-section {
+    height: auto;
+    padding: 0 4;
+    margin-bottom: 2;
+}
+
+#switches-section.hidden {
+    display: none;
+}
+
+.switches-hint {
+    color: $text-muted;
+    text-style: italic;
+    margin-bottom: 1;
+}
+
+.switches-menu {
+    height: auto;
+    border: solid $secondary;
+    background: $panel;
+    padding: 1;
+}
+
+.switch-item {
+    color: $accent;
+    text-style: bold;
+    margin: 0 0 1 0;
+}
+
+.switch-item:hover {
+    color: $primary;
+}
+
+.switch-item-muted {
+    color: $text-muted;
+    text-style: italic;
+    margin: 0 0 1 0;
+}
+
+Button {
+    width: 100%;
+    margin-bottom: 1;
+    height: 3;
+}
+
+Button:hover {
+    background: $surface-lighten-2;
+}
+
+Button:focus {
+    background: $accent;
+    color: $surface;
+    border-left: thick $primary;
+    text-style: bold;
+}
+
+/* ============================================================================
+   OUTPUT SECTION
+   ============================================================================ */
+
+#output-section {
+    height: 1fr;
+    padding: 0 2;
+    min-height: 20;
+    margin-bottom: 1;
+}
+
+#output-title {
+    text-style: bold;
+    color: $text;
+    background: $surface-lighten-1;
+    padding: 0 1;
+    margin-bottom: 0;
+}
+
+#output-container {
+    height: 100%;
+    border: solid $secondary;
+    background: $panel;
+    padding: 1;
+    scrollbar-background: $surface;
+    scrollbar-color: $primary;
+}
+
+#output-scroll {
+    height: 100%;
+}
+
+#output-content {
+    height: auto;
+    color: $text;
+}
+
+/* Output status classes */
+.output-ready {
+    color: $text-muted;
+    text-style: italic;
+}
+
+.output-running {
+    color: $warning;
+}
+
+.output-success {
+    color: $success;
+}
+
+.output-error {
+    color: $error;
+}
+
+.output-info {
+    color: $accent;
+}
+
+#loading-section {
+    height: auto;
+    align: center middle;
+    padding: 1;
+}

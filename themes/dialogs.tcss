@@ -1,0 +1,79 @@
+/* Microsoft 365 Admin TUI - Modal Dialog Styles */
+
+/* ============================================================================
+   MODAL SCREEN BASE
+   ============================================================================ */
+
+ModalScreen {
+    align: center middle;
+    background: $background 80%;
+}
+
+#dialog {
+    min-width: 80;
+    max-width: 100;
+    height: auto;
+    border: thick $primary;
+    background: $surface;
+    padding: 2 3;
+}
+
+/* ============================================================================
+   DIALOG HEADER
+   ============================================================================ */
+
+.dialog-title {
+    text-align: center;
+    text-style: bold;
+    color: $text;
+    background: $primary;
+    width: 100%;
+    padding: 1;
+    margin-bottom: 1;
+}
+
+/* ============================================================================
+   FORM FIELDS
+   ============================================================================ */
+
+.field-label {
+    color: $accent;
+    text-style: bold;
+    margin: 1 0 0 0;
+    width: 100%;
+}
+
+.field-hint {
+    color: $text-muted;
+    text-style: italic;
+    margin: 0 0 0 0;
+    text-opacity: 80%;
+    width: 100%;
+}
+
+Input {
+    margin: 0 0 1 0;
+    border: tall $surface-lighten-2;
+    background: $surface-lighten-1;
+    width: 100%;
+}
+
+Input:focus {
+    border: tall $accent;
+}
+
+/* ============================================================================
+   DIALOG BUTTONS
+   ============================================================================ */
+
+.button-row {
+    margin-top: 2;
+    height: auto;
+    width: 100%;
+    align: center middle;
+}
+
+.button-row Button {
+    margin: 0 1;
+    min-width: 18;
+}

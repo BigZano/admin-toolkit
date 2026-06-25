@@ -1,0 +1,9 @@
+# Python dependencies for Microsoft 365 Admin TUI
+# Install with: pip install -r requirements.txt
+
+# Textual framework for TUI
+textual>=0.47.0
+textual-dev>=1.3.0
+
+# Additional utilities (if needed in future)
+# No additional dependencies required at this time
