@@ -1,125 +1,61 @@
-# Quick Start Guide
+# Quick Start
 
-## For Technicians - First Time Setup
+## 1. Check prerequisites
 
-### 1. Install Prerequisites
+You need **PowerShell 7+** on your `PATH`:
 
-**Install PowerShell Core:**
-```bash
-# Ubuntu/Debian
-sudo apt-get install -y powershell
-
-# macOS
-brew install --cask powershell
-```
-
-**Verify PowerShell:**
-```bash
+```powershell
 pwsh --version
 ```
 
-### 2. Clone and Setup
+Depending on which scripts you run, you may also need:
 
-```bash
-# Clone the repository
-git clone https://github.com/BigZano/TUI-project.git
-cd TUI-project
-
-# Run setup script (Linux/macOS)
-./setup.sh
-
-# Or install manually
-pip install -r requirements.txt
-```
-
-### 3. Install PowerShell Modules
-
-```bash
-pwsh
-```
-
-Then in PowerShell:
-```powershell
-Install-Module Microsoft.Graph -Scope CurrentUser -Force
-Install-Module ExchangeOnlineManagement -Scope CurrentUser -Force
-exit
-```
-
-### 4. Run the Tool
-
-```bash
-python main.py
-```
-
-## Usage
-
-### Creating a User
-1. Launch the tool: `python main.py`
-2. Select "Create User (Microsoft Graph)"
-3. Fill in the form:
-   - Display Name: `John Doe`
-   - User Principal Name: `john.doe@company.com`
-   - Usage Location: `US` (2-letter country code)
-   - Password: At least 8 characters
-   - License Index: `0` to skip, or number after listing licenses
-4. Click "Create User"
-5. Sign in when prompted (web browser will open)
-6. Check output panel for results
-
-### Running an Audit
-1. Select the audit type (MFA Audit, Delegate Access, etc.)
-2. Enter required information if prompted
-3. Sign in when prompted
-4. Wait for completion
-5. Reports saved to `~/Documents/M365Reports/`
-
-### Tips
-- Press `q` to quit
-- Press `d` to toggle dark/light theme
-- Press `c` to clear output
-- Press `Escape` to cancel dialogs
-- Check `logs/` directory for detailed logs
-
-## Common Tasks
-
-### List Available Licenses
-```bash
-pwsh Scripts/MgGraphUserCreation.ps1 -ListLicenses
-```
-
-### Check Delegate Access
-Run from TUI: Select "Audit Delegate Access"
-Enter user email to check who has access to their mailbox
-
-### Export All Mailboxes
-Run from TUI: Select "Export Mailbox Report"
-Choose mailbox type (All, UserMailbox, SharedMailbox, etc.)
-
-## Troubleshooting
-
-**"pwsh not found"**
-- Install PowerShell Core (see step 1 above)
-
-**"Failed to import modules"**
-- Install PowerShell modules (see step 3 above)
-
-**"Authentication failed"**
-- Ensure you're using an admin account
-- Check your account has required permissions
-- Try disconnecting first:
+- **AD / GroupPolicy scripts** → RSAT (`ActiveDirectory`, `GroupPolicy` modules)
+- **M365 scripts** → `Microsoft.Graph` and `ExchangeOnlineManagement`:
   ```powershell
-  pwsh
-  Disconnect-MgGraph
-  Disconnect-ExchangeOnline -Confirm:$false
+  Install-Module Microsoft.Graph -Scope CurrentUser -Force
+  Install-Module ExchangeOnlineManagement -Scope CurrentUser -Force
   ```
 
-**"Import errors in Python"**
-- Check Python version: `python --version` (need 3.12+)
-- Reinstall requirements: `pip install -r requirements.txt --force-reinstall`
+## 2. Get the toolkit
 
-## Getting Help
+**Prebuilt binary:** put `admin-toolkit.exe` next to the `Scripts/` folder.
 
-1. Check the full README.md
-2. Review logs in `logs/` directory
-3. Check output panel in the TUI
-4. Pray. And Google. 
+**Or build from source** (requires [Go](https://go.dev/dl/) 1.23+):
+
+```powershell
+git clone https://github.com/BigZano/admin-toolkit.git
+cd admin-toolkit
+go build -o admin-toolkit.exe
+```
+
+## 3. Run it
+
+```powershell
+.\admin-toolkit.exe
+```
+
+(or `go run .` during development)
+
+## 4. Drive the UI
+
+| Key            | Action                                      |
+|----------------|---------------------------------------------|
+| `↑` `↓`        | Move selection                              |
+| `Enter`        | Open category → open script → run           |
+| `Tab`          | Next parameter field                         |
+| `e`            | Edit the selected script                     |
+| `a`            | Add an external `.ps1` to the category       |
+| `Esc`          | Back / cancel                                |
+| `q`            | Quit                                         |
+
+Flow: pick a **category** → pick a **script** → fill the **parameter form**
+(required fields marked `*`) → **confirm** → watch output stream in the right pane.
+
+CSV reports are saved to `~/Documents/AdminToolReports`.
+
+## 5. Add your own scripts
+
+Drop a `.ps1` into `Scripts/<Category>/` — it's auto-discovered, no code changes.
+Put a `# description` on line 1 and a `param()` block with `[string]` parameters so the
+TUI can describe it and prompt correctly. See [README.md](README.md) for full conventions.
