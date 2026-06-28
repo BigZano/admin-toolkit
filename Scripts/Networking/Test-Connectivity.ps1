@@ -37,32 +37,33 @@ $hostList = if (Test-Path $Targets -ErrorAction SilentlyContinue) {
 Write-Log "Testing connectivity to $($hostList.Count) target(s)..." "Cyan"
 Write-Host ""
 
-$report = foreach ($host in $hostList) {
-    $result = Test-Connection -ComputerName $host -Count $pingCount -ErrorAction SilentlyContinue
+$report = foreach ($targetHost in $hostList) {
+    $result  = Test-Connection -ComputerName $targetHost -Count $pingCount -ErrorAction SilentlyContinue
+    $replies = @($result | Where-Object { $_.Status -eq "Success" })
 
-    if ($result) {
-        $avg = [math]::Round(($result | Measure-Object -Property ResponseTime -Average).Average, 1)
-        $min = ($result | Measure-Object -Property ResponseTime -Minimum).Minimum
-        $max = ($result | Measure-Object -Property ResponseTime -Maximum).Maximum
-        $pct = [math]::Round(($result.Count / $pingCount) * 100, 0)
+    if ($replies.Count -gt 0) {
+        $avg = [math]::Round(($replies | Measure-Object -Property Latency -Average).Average, 1)
+        $min = ($replies | Measure-Object -Property Latency -Minimum).Minimum
+        $max = ($replies | Measure-Object -Property Latency -Maximum).Maximum
+        $pct = [math]::Round(($replies.Count / $pingCount) * 100, 0)
 
         $color = if ($pct -lt 50) { "Yellow" } else { "Green" }
-        Write-Host ("  {0,-35} {1,3}% success  avg {2,5} ms  [{3}-{4} ms]" -f $host, $pct, $avg, $min, $max) -ForegroundColor $color
+        Write-Host ("  {0,-35} {1,3}% success  avg {2,5} ms  [{3}-{4} ms]" -f $targetHost, $pct, $avg, $min, $max) -ForegroundColor $color
 
         [PSCustomObject]@{
-            Host        = $host
+            Host        = $targetHost
             Reachable   = $true
             SuccessPct  = $pct
             AvgMs       = $avg
             MinMs       = $min
             MaxMs       = $max
-            Replies     = $result.Count
-            ResolvedIP  = $result[0].IPV4Address
+            Replies     = $replies.Count
+            ResolvedIP  = $replies[0].Address
         }
     } else {
-        Write-Host ("  {0,-35} UNREACHABLE" -f $host) -ForegroundColor Red
+        Write-Host ("  {0,-35} UNREACHABLE" -f $targetHost) -ForegroundColor Red
         [PSCustomObject]@{
-            Host        = $host
+            Host        = $targetHost
             Reachable   = $false
             SuccessPct  = 0
             AvgMs       = $null

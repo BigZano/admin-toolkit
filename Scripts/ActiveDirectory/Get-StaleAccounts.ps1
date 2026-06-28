@@ -42,10 +42,9 @@ $cutoff = (Get-Date).AddDays(-$days)
 Write-Log "Searching for accounts inactive since: $($cutoff.ToString('yyyy-MM-dd'))" "Cyan"
 
 try {
-    $stale = Get-ADUser -Filter {
-        Enabled -eq $true -and LastLogonDate -lt $cutoff
-    } -Properties DisplayName, EmailAddress, LastLogonDate, PasswordLastSet, Department, Title, DistinguishedName |
-    Where-Object { $_.LastLogonDate -ne $null } |
+    $stale = Get-ADUser -Filter { Enabled -eq $true } `
+        -Properties DisplayName, EmailAddress, LastLogonDate, PasswordLastSet, Department, Title, DistinguishedName |
+    Where-Object { $_.LastLogonDate -ne $null -and $_.LastLogonDate -lt $cutoff } |
     Sort-Object LastLogonDate |
     ForEach-Object {
         [PSCustomObject]@{

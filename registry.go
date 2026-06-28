@@ -191,6 +191,7 @@ func extractParams(content string) []ScriptParam {
 var acronyms = map[string]bool{
 	"MFA": true, "UPN": true, "SKU": true, "GPO": true,
 	"DNS": true, "DHCP": true, "AD": true, "GAL": true, "OU": true,
+	"VM": true, "DC": true, "DFS": true, "VMs": true,
 }
 
 func displayName(name string) string {
@@ -341,4 +342,16 @@ var paramLabels = map[string]string{
 	"ForceChangeAtLogon": "Force password change at next login (true/false)",
 	"FilterName":       "Filter by name (leave blank for all)",
 	"FilterStatus":     "Filter by status (Running, Stopped, or blank for all)",
+
+	// Hyper-V
+	"VMName":          "VM name(s), comma-separated (leave blank for all)",
+	"CheckpointName":  "Checkpoint name (leave blank for auto-name)",
+	"ExportPath":      "Destination folder for the export",
+	"Force":           "Force power-off without shutdown (true/false)",
+
+	// Server maintenance
+	"TargetDC":        "Domain controller to target (leave blank for all)",
+	"Partition":       "AD partition DN (leave blank for domain default)",
+	"DFSGroupName":    "DFS-R group name (leave blank for all)",
+	"FailedOnly":      "Show only tasks with non-zero last result (true/false)",
 }
