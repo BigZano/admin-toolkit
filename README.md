@@ -1,6 +1,6 @@
 # Admin Toolkit
 
-A fast, keyboard-driven Terminal User Interface (TUI) for running SysAdmin PowerShell
+A TUI for running SysAdmin PowerShell
 scripts. Built in Go with [Bubble Tea](https://github.com/charmbracelet/bubbletea),
 it auto-discovers your PowerShell scripts, organizes them by category, prompts for
 parameters in plain language, and streams output live — no menus to maintain, no code
