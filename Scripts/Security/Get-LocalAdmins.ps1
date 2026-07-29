@@ -25,46 +25,65 @@ function Write-Log {
 }
 
 # Resolve computer list
-$computers = if (-not [string]::IsNullOrEmpty($ComputerList) -and (Test-Path $ComputerList -ErrorAction SilentlyContinue)) {
-    Get-Content $ComputerList | Where-Object { $_ -match '\S' }
+$computers = if (-not [string]::IsNullOrEmpty($ComputerList) -and (Test-Path -LiteralPath $ComputerList -ErrorAction SilentlyContinue)) {
+    Get-Content -LiteralPath $ComputerList | Where-Object { $_ -match '\S' }
 } elseif (-not [string]::IsNullOrEmpty($ComputerList)) {
     $ComputerList -split ',' | ForEach-Object { $_.Trim() }
 } else {
     @($env:COMPUTERNAME)
 }
+$computers = @($computers)
 
 Write-Log "Auditing local Administrators on $($computers.Count) computer(s)..." "Cyan"
 
-$report = foreach ($computer in $computers) {
-    Write-Log "  Processing: $computer" "Gray"
-    try {
-        $members = Invoke-Command -ComputerName $computer -ErrorAction Stop -ScriptBlock {
-            $group = [ADSI]"WinNT://$env:COMPUTERNAME/Administrators,group"
-            $group.Members() | ForEach-Object {
-                $path = $_.GetType().InvokeMember("ADsPath", "GetProperty", $null, $_, $null)
-                $name = $_.GetType().InvokeMember("Name", "GetProperty", $null, $_, $null)
-                $type = $_.GetType().InvokeMember("Class", "GetProperty", $null, $_, $null)
-                [PSCustomObject]@{
-                    Computer  = $env:COMPUTERNAME
-                    Member    = $name
-                    Type      = $type
-                    Source    = if ($path -match "WinNT://$env:COMPUTERNAME/") { "Local" } else { "Domain" }
-                    ADsPath   = $path
-                }
-            }
-        }
-        $members
-    } catch {
-        Write-Log "  Failed on $computer : $($_.Exception.Message)" "Red"
+# Shared query: run directly on the local machine (no WinRM required),
+# via Invoke-Command for remote machines.
+$adminQuery = {
+    $group = [ADSI]"WinNT://$env:COMPUTERNAME/Administrators,group"
+    $group.Members() | ForEach-Object {
+        $path = $_.GetType().InvokeMember("ADsPath", "GetProperty", $null, $_, $null)
+        $name = $_.GetType().InvokeMember("Name", "GetProperty", $null, $_, $null)
+        $type = $_.GetType().InvokeMember("Class", "GetProperty", $null, $_, $null)
+        $sid  = ""
+        try {
+            $sidBytes = $_.GetType().InvokeMember("objectSid", "GetProperty", $null, $_, $null)
+            if ($sidBytes) { $sid = (New-Object System.Security.Principal.SecurityIdentifier($sidBytes, 0)).Value }
+        } catch { }
         [PSCustomObject]@{
-            Computer = $computer; Member = "ERROR"; Type = ""; Source = ""; ADsPath = $_.Exception.Message
+            Computer  = $env:COMPUTERNAME
+            Member    = $name
+            Type      = $type
+            SID       = $sid
+            # Local member ADsPaths look like WinNT://<domain-or-workgroup>/<computer>/<account>
+            Source    = if ($path -match "/$env:COMPUTERNAME/") { "Local" } else { "Domain" }
+            ADsPath   = $path
         }
     }
 }
 
-# Flag non-standard accounts (local users that aren't built-in Administrator)
+$failedCount = 0
+$report = foreach ($computer in $computers) {
+    Write-Log "  Processing: $computer" "Gray"
+    try {
+        if ($computer -eq $env:COMPUTERNAME) {
+            & $adminQuery
+        } else {
+            Invoke-Command -ComputerName $computer -ErrorAction Stop -ScriptBlock $adminQuery
+        }
+    } catch {
+        $failedCount++
+        Write-Log "  Failed on $computer : $($_.Exception.Message)" "Red"
+        [PSCustomObject]@{
+            Computer = $computer; Member = "ERROR"; Type = ""; SID = ""; Source = ""; ADsPath = $_.Exception.Message
+        }
+    }
+}
+
+# Flag non-standard accounts: local users that are not the built-in Administrator.
+# The built-in Administrator is identified by its well-known SID suffix (-500),
+# which also catches a renamed Administrator account.
 $nonStandard = @($report | Where-Object {
-    $_.Source -eq "Local" -and $_.Member -ne "Administrator" -and $_.Type -eq "User"
+    $_.Source -eq "Local" -and $_.Type -eq "User" -and $_.SID -notlike "*-500"
 })
 
 $domainAccounts = @($report | Where-Object { $_.Source -eq "Domain" })
@@ -76,7 +95,7 @@ Write-Host ""
 $report | Group-Object Computer | ForEach-Object {
     Write-Host "  $($_.Name):" -ForegroundColor Cyan
     $_.Group | ForEach-Object {
-        $color = if ($_.Source -eq "Local" -and $_.Member -ne "Administrator" -and $_.Type -eq "User") { "Yellow" }
+        $color = if ($_.Source -eq "Local" -and $_.Type -eq "User" -and $_.SID -notlike "*-500") { "Yellow" }
                  elseif ($_.Source -eq "Domain") { "White" }
                  else { "DarkGray" }
         Write-Host ("    {0,-30} [{1}] [{2}]" -f $_.Member, $_.Type, $_.Source) -ForegroundColor $color
@@ -85,3 +104,8 @@ $report | Group-Object Computer | ForEach-Object {
 
 $report | Export-Csv -Path $outputFile -NoTypeInformation -Encoding UTF8
 Write-Host ""; Write-Log "Report saved to: $outputFile" "Green"
+
+if ($failedCount -eq $computers.Count) {
+    Write-Log "All $($computers.Count) computer(s) failed to respond." "Red"
+    exit 1
+}

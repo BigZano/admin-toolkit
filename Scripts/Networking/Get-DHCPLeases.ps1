@@ -27,6 +27,14 @@ function Write-Log {
     Write-Host $Message -ForegroundColor $Color
 }
 
+try {
+    Import-Module DhcpServer -ErrorAction Stop
+} catch {
+    Write-Log "DhcpServer module not found: $($_.Exception.Message)" "Red"
+    Write-Log "Install RSAT DHCP tools: Add-WindowsCapability -Online -Name 'Rsat.DHCP.Tools~~~~0.0.1.0'" "Yellow"
+    exit 1
+}
+
 Write-Log "Connecting to DHCP server: $DHCPServer" "Cyan"
 
 try {
@@ -45,7 +53,12 @@ try {
     $allLeases = foreach ($scope in $targetScopes) {
         Write-Log "  Scope: $($scope.ScopeId)  [$($scope.Name)]  $($scope.StartRange) - $($scope.EndRange)" "Gray"
 
-        $leases = Get-DhcpServerv4Lease -ComputerName $DHCPServer -ScopeId $scope.ScopeId -ErrorAction SilentlyContinue
+        $leases = @()
+        try {
+            $leases = Get-DhcpServerv4Lease -ComputerName $DHCPServer -ScopeId $scope.ScopeId -ErrorAction Stop
+        } catch {
+            Write-Log "  Failed to read leases for scope $($scope.ScopeId): $($_.Exception.Message)" "Red"
+        }
 
         foreach ($lease in $leases) {
             [PSCustomObject]@{
@@ -77,8 +90,12 @@ try {
         Write-Host ("  {0,-16} {1,-35} {2,-20} [{3}]" -f $_.IPAddress, $_.HostName, $_.MACAddress, $_.AddressState) -ForegroundColor $color
     }
 
-    $allLeases | Export-Csv -Path $outputFile -NoTypeInformation -Encoding UTF8
-    Write-Host ""; Write-Log "Report saved to: $outputFile" "Green"
+    if ($allLeases) {
+        $allLeases | Export-Csv -Path $outputFile -NoTypeInformation -Encoding UTF8
+        Write-Host ""; Write-Log "Report saved to: $outputFile" "Green"
+    } else {
+        Write-Log "No leases collected; no CSV report generated." "Yellow"
+    }
 } catch {
     Write-Log "Error: $($_.Exception.Message)" "Red"
     Write-Log "Ensure DHCP Server Tools (RSAT) are installed and you have admin rights on $DHCPServer." "Yellow"

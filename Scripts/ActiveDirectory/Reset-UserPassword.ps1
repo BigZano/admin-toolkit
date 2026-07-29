@@ -36,18 +36,26 @@ Write-Host "  Enabled: $($user.Enabled)" -ForegroundColor $(if ($user.Enabled) {
 Write-Host ""
 
 $mustChange = $ForceChangeAtLogon -eq "true" -or $ForceChangeAtLogon -eq "1"
+if (-not $mustChange -and $ForceChangeAtLogon -notin @("false", "0")) {
+    Write-Log "Unrecognized ForceChangeAtLogon value '$ForceChangeAtLogon' — treating as false." "Yellow"
+}
 
 try {
     $securePassword = ConvertTo-SecureString $NewPassword -AsPlainText -Force
     Set-ADAccountPassword -Identity $Username -NewPassword $securePassword -Reset -ErrorAction Stop
-
-    if ($mustChange) {
-        Set-ADUser -Identity $Username -ChangePasswordAtLogon $true -ErrorAction Stop
-        Write-Log "Password reset. User must change at next logon." "Green"
-    } else {
-        Write-Log "Password reset. No forced change at logon." "Green"
-    }
 } catch {
     Write-Log "Failed to reset password: $($_.Exception.Message)" "Red"
     exit 1
+}
+
+if ($mustChange) {
+    try {
+        Set-ADUser -Identity $Username -ChangePasswordAtLogon $true -ErrorAction Stop
+        Write-Log "Password reset. User must change at next logon." "Green"
+    } catch {
+        Write-Log "Password was reset, but failed to set change-at-logon flag: $($_.Exception.Message)" "Red"
+        exit 1
+    }
+} else {
+    Write-Log "Password reset. No forced change at logon." "Green"
 }

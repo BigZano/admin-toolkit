@@ -35,33 +35,32 @@ $knownAutoStopped = @(
 
 Write-Log "Retrieving services from: $target" "Cyan"
 
+# Get-Service lost -ComputerName in PowerShell 7, so everything is sourced from CIM.
+# Note: Win32_Service.StartMode reports "Auto" (not "Automatic"), plus "Manual"/"Disabled".
+$cimParams = @{}
 try {
-    $services = Get-Service -ComputerName $target -ErrorAction Stop |
-        Sort-Object StartType, Status, DisplayName
+    if ($target -ne $env:COMPUTERNAME) { $cimParams = @{ CimSession = New-CimSession -ComputerName $target } }
+
+    $cimServices = Get-CimInstance Win32_Service @cimParams -ErrorAction Stop |
+        Sort-Object StartMode, State, DisplayName
 
     if (-not [string]::IsNullOrEmpty($FilterStatus)) {
-        $services = $services | Where-Object { $_.Status -eq $FilterStatus }
+        $cimServices = $cimServices | Where-Object { $_.State -eq $FilterStatus }
         Write-Log "Filter: Status = $FilterStatus" "Yellow"
     }
 
-    $cimParams = if ($target -ne $env:COMPUTERNAME) { @{ CimSession = New-CimSession -ComputerName $target } } else { @{} }
-    $cimServices = Get-CimInstance Win32_Service @cimParams -ErrorAction SilentlyContinue
-
-    $report = $services | ForEach-Object {
-        $svc = $_
-        $cimSvc = $cimServices | Where-Object { $_.Name -eq $svc.Name } | Select-Object -First 1
-
-        $isAutoStopped = $svc.StartType -eq "Automatic" -and $svc.Status -eq "Stopped" `
-            -and $svc.Name -notin $knownAutoStopped
+    $report = $cimServices | ForEach-Object {
+        $isAutoStopped = $_.StartMode -eq "Auto" -and $_.State -eq "Stopped" `
+            -and $_.Name -notin $knownAutoStopped
 
         [PSCustomObject]@{
-            Name        = $svc.Name
-            DisplayName = $svc.DisplayName
-            Status      = $svc.Status
-            StartType   = $svc.StartType
-            Account     = $cimSvc.StartName
-            PID         = $cimSvc.ProcessId
-            Description = $cimSvc.Description
+            Name        = $_.Name
+            DisplayName = $_.DisplayName
+            Status      = $_.State
+            StartType   = $_.StartMode
+            Account     = $_.StartName
+            PID         = $_.ProcessId
+            Description = $_.Description
             NeedsReview = $isAutoStopped
         }
     }
@@ -94,8 +93,8 @@ try {
 
     $report | Export-Csv -Path $outputFile -NoTypeInformation -Encoding UTF8
     Write-Host ""; Write-Log "Report saved to: $outputFile" "Green"
-
-    if ($cimParams.ContainsKey("CimSession")) { Remove-CimSession $cimParams["CimSession"] }
 } catch {
     Write-Log "Error: $($_.Exception.Message)" "Red"; exit 1
+} finally {
+    if ($cimParams.ContainsKey("CimSession")) { Remove-CimSession $cimParams["CimSession"] -ErrorAction SilentlyContinue }
 }

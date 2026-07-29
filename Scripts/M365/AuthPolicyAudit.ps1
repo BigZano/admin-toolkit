@@ -8,9 +8,9 @@ param(
 # Set output directory
 if ([string]::IsNullOrEmpty($OutputDirectory)) {
     if ($IsWindows -or $env:OS -match "Windows") {
-        $OutputDirectory = Join-Path -Path $env:USERPROFILE -ChildPath "Documents\M365Reports"
+        $OutputDirectory = Join-Path -Path $env:USERPROFILE -ChildPath "Documents\AdminToolReports"
     } else {
-        $OutputDirectory = Join-Path -Path $env:HOME -ChildPath "Documents/M365Reports"
+        $OutputDirectory = Join-Path -Path $env:HOME -ChildPath "Documents/AdminToolReports"
     }
 }
 
@@ -33,6 +33,14 @@ function Write-Log {
 Write-Log "Starting authentication policy audit..." "Cyan"
 
 try {
+    Import-Module ExchangeOnlineManagement -ErrorAction Stop
+} catch {
+    Write-Log "FATAL: Failed to import ExchangeOnlineManagement module: $($_.Exception.Message)" "Red"
+    Write-Log "SOLUTION: Install module with: Install-Module ExchangeOnlineManagement -Scope CurrentUser" "Yellow"
+    exit 1
+}
+
+try {
     Connect-ExchangeOnline -ErrorAction Stop
     Write-Log "Connected to Exchange Online." "Green"
 } catch {
@@ -40,14 +48,18 @@ try {
     exit 1
 }
 
+$auditFailed = $false
 try {
     $orgConfig = Get-OrganizationConfig
     $tenantModernAuthEnabled = $orgConfig.OAuth2ClientProfileEnabled
+    $defaultPolicyName = [string]$orgConfig.DefaultAuthenticationPolicy
     Write-Log "Tenant modern auth enabled: $tenantModernAuthEnabled" "Cyan"
+    Write-Log "Tenant default authentication policy: $(if ($defaultPolicyName) { $defaultPolicyName } else { '(none)' })" "Cyan"
 
     Write-Log "Retrieving authentication policies..." "Yellow"
-    $authPolicies = Get-AuthenticationPolicy | ForEach-Object {
-        [PSCustomObject]@{
+    $authPolicies = @{}
+    Get-AuthenticationPolicy | ForEach-Object {
+        $authPolicies[$_.Name] = [PSCustomObject]@{
             Name                       = $_.Name
             AllowBasicAuthPop          = $_.AllowBasicAuthPop
             AllowBasicAuthImap         = $_.AllowBasicAuthImap
@@ -58,28 +70,36 @@ try {
             AllowBasicAuthPowershell   = $_.AllowBasicAuthPowershell
             AllowBasicAuthMAPI         = $_.AllowBasicAuthMAPI
         }
-    } | Group-Object -Property Name -AsHashTable -AsString
+    }
 
     Write-Log "Retrieving all users..." "Yellow"
     $users = Get-User -ResultSize Unlimited
     Write-Log "Processing $($users.Count) users..." "Yellow"
 
     $report = foreach ($user in $users) {
-        $policyName = if ([string]::IsNullOrEmpty($user.AuthenticationPolicy)) { "Default" } else { $user.AuthenticationPolicy }
-        $policy = $authPolicies[$policyName]
+        # Effective policy: user-assigned, else tenant default. No policy at all means
+        # legacy (basic) auth is NOT blocked by an authentication policy.
+        $policyName = $user.AuthenticationPolicy
+        if ([string]::IsNullOrEmpty($policyName)) { $policyName = $defaultPolicyName }
 
-        $legacyAuthAllowed = $false
-        if ($policy) {
-            $legacyAuthAllowed = (
-                $policy.AllowBasicAuthPop          -or
-                $policy.AllowBasicAuthImap         -or
-                $policy.AllowBasicAuthSmtp         -or
-                $policy.AllowBasicAuthActiveSync   -or
-                $policy.AllowBasicAuthAutodiscover -or
-                $policy.AllowBasicAuthWebServices  -or
-                $policy.AllowBasicAuthPowershell   -or
-                $policy.AllowBasicAuthMAPI
-            )
+        if ([string]::IsNullOrEmpty($policyName)) {
+            $policyName = "NoPolicy-DefaultAllows"
+            $legacyAuthAllowed = $true
+        } else {
+            $policy = $authPolicies[$policyName]
+            $legacyAuthAllowed = $false
+            if ($policy) {
+                $legacyAuthAllowed = (
+                    $policy.AllowBasicAuthPop          -or
+                    $policy.AllowBasicAuthImap         -or
+                    $policy.AllowBasicAuthSmtp         -or
+                    $policy.AllowBasicAuthActiveSync   -or
+                    $policy.AllowBasicAuthAutodiscover -or
+                    $policy.AllowBasicAuthWebServices  -or
+                    $policy.AllowBasicAuthPowershell   -or
+                    $policy.AllowBasicAuthMAPI
+                )
+            }
         }
 
         [PSCustomObject]@{
@@ -99,7 +119,11 @@ try {
 
 } catch {
     Write-Log "Error during audit: $($_.Exception.Message)" "Red"
+    $auditFailed = $true
 } finally {
-    Disconnect-ExchangeOnline -Confirm:$false
+    Disconnect-ExchangeOnline -Confirm:$false -ErrorAction SilentlyContinue
     Write-Log "Disconnected from Exchange Online." "Cyan"
 }
+
+if ($auditFailed) { exit 1 }
+exit 0

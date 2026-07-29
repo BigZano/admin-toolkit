@@ -19,7 +19,11 @@ if (-not (Test-Path $OutputDirectory)) {
     New-Item -Path $OutputDirectory -ItemType Directory -Force | Out-Null
 }
 
-$days = [int]$DaysInactive
+$days = 0
+if (-not [int]::TryParse($DaysInactive, [ref]$days)) {
+    Write-Host "Invalid DaysInactive value '$DaysInactive' — must be a whole number." -ForegroundColor Red
+    exit 1
+}
 $timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
 $outputFile = Join-Path $OutputDirectory "StaleAccounts_${days}days_$timestamp.csv"
 $logFile    = Join-Path $OutputDirectory "StaleAccounts_$timestamp.log"
@@ -40,11 +44,15 @@ try {
 
 $cutoff = (Get-Date).AddDays(-$days)
 Write-Log "Searching for accounts inactive since: $($cutoff.ToString('yyyy-MM-dd'))" "Cyan"
+Write-Log "Note: LastLogonDate is replicated with up to ~14 days of lag." "DarkGray"
 
 try {
     $stale = Get-ADUser -Filter { Enabled -eq $true } `
-        -Properties DisplayName, EmailAddress, LastLogonDate, PasswordLastSet, Department, Title, DistinguishedName |
-    Where-Object { $_.LastLogonDate -ne $null -and $_.LastLogonDate -lt $cutoff } |
+        -Properties DisplayName, EmailAddress, LastLogonDate, PasswordLastSet, Department, Title, DistinguishedName, Created |
+    Where-Object {
+        ($_.LastLogonDate -and $_.LastLogonDate -lt $cutoff) -or
+        (-not $_.LastLogonDate -and $_.Created -lt $cutoff)
+    } |
     Sort-Object LastLogonDate |
     ForEach-Object {
         [PSCustomObject]@{
@@ -67,7 +75,7 @@ try {
 
         Write-Host ""
         Write-Host "  Top 10 most stale:" -ForegroundColor DarkGray
-        $stale | Select-Object -Last 10 | ForEach-Object {
+        $stale | Select-Object -First 10 | ForEach-Object {
             Write-Host ("  {0,-25} Last logon: {1}  ({2} days)" -f $_.SamAccountName, $_.LastLogon, $_.DaysInactive) -ForegroundColor Yellow
         }
     }

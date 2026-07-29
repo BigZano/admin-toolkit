@@ -1,9 +1,9 @@
 # Audit mailbox delegate permissions and folder access for a specific user
 
 param(
-    [Parameter(Mandatory=$true)]
-    [string]$TargetUserEmail,
-    
+    [Parameter(Mandatory=$false)]
+    [string]$TargetUserEmail = "",
+
     [Parameter(Mandatory=$false)]
     [string]$OutputDirectory = ""
 )
@@ -11,9 +11,9 @@ param(
 # Set output directory (OS agnostic)
 if ([string]::IsNullOrEmpty($OutputDirectory)) {
     if ($IsWindows -or $env:OS -match "Windows") {
-        $OutputDirectory = Join-Path -Path $env:USERPROFILE -ChildPath "Documents\M365Reports"
+        $OutputDirectory = Join-Path -Path $env:USERPROFILE -ChildPath "Documents\AdminToolReports"
     } else {
-        $OutputDirectory = Join-Path -Path $env:HOME -ChildPath "Documents/M365Reports"
+        $OutputDirectory = Join-Path -Path $env:HOME -ChildPath "Documents/AdminToolReports"
     }
 }
 
@@ -22,9 +22,10 @@ if (-not (Test-Path -Path $OutputDirectory)) {
 }
 
 # Set output files with timestamp
-$timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
-$outputFile = Join-Path $OutputDirectory "DelegateAccess_${TargetUserEmail}_$timestamp.csv"
-$logFile = Join-Path $OutputDirectory "DelegateAccess_${TargetUserEmail}_$timestamp.log"
+$timestamp  = Get-Date -Format "yyyyMMdd_HHmmss"
+$safeTarget = $TargetUserEmail -replace '[\\/:*?"<>|]', '_'
+$outputFile = Join-Path $OutputDirectory "DelegateAccess_${safeTarget}_$timestamp.csv"
+$logFile    = Join-Path $OutputDirectory "DelegateAccess_${safeTarget}_$timestamp.log"
 
 # Logging function
 function Write-Log {
@@ -33,6 +34,13 @@ function Write-Log {
     $logMessage = "[$timestamp] $Message"
     $logMessage | Out-File -FilePath $logFile -Append
     Write-Host $Message -ForegroundColor $Color
+}
+
+# Validate required parameter (NonInteractive-safe: no mandatory prompt)
+if ([string]::IsNullOrWhiteSpace($TargetUserEmail)) {
+    Write-Log "FATAL: TargetUserEmail is required." "Red"
+    Write-Log "SOLUTION: Run with -TargetUserEmail user@domain.com" "Yellow"
+    exit 1
 }
 
 # Import Exchange Online module
@@ -60,170 +68,157 @@ try {
     exit 1
 }
 
-# Initialize array to hold permissions
-$permissionsReport = [System.Collections.ArrayList]::new()
-
-Write-Log "" 
-Write-Log "Retrieving mailboxes and groups..." "Yellow"
-
-# Get all mailboxes, shared mailboxes, and distribution/Microsoft 365 groups
+# Resolve the target user once so we can query/compare canonically.
+# EXO permission entries may reference the trustee as alias, name, DN, or SMTP.
 try {
-    $mailboxes = Get-Mailbox -ResultSize Unlimited -ErrorAction Stop
-    Write-Log "Found $($mailboxes.Count) user mailboxes" "Cyan"
-    
-    $sharedMailboxes = Get-Mailbox -RecipientTypeDetails SharedMailbox -ResultSize Unlimited -ErrorAction Stop
-    Write-Log "Found $($sharedMailboxes.Count) shared mailboxes" "Cyan"
-    
-    $distributionGroups = Get-DistributionGroup -ResultSize Unlimited -ErrorAction Stop
-    Write-Log "Found $($distributionGroups.Count) distribution groups" "Cyan"
-    
-    # Get Microsoft 365 Groups (Unified Groups)
-    $unifiedGroups = Get-UnifiedGroup -ResultSize Unlimited -ErrorAction Stop
-    Write-Log "Found $($unifiedGroups.Count) Microsoft 365 groups" "Cyan"
+    $target     = Get-Recipient -Identity $TargetUserEmail -ErrorAction Stop
+    $targetDN   = [string]$target.DistinguishedName
+    $targetSmtp = [string]$target.PrimarySmtpAddress
+    Write-Log "Resolved target recipient: $($target.DisplayName) <$targetSmtp>" "Green"
 } catch {
-    Write-Log "FATAL: Error retrieving mailboxes or groups: $($_.Exception.Message)" "Red"
+    Write-Log "FATAL: Could not resolve '$TargetUserEmail' as a recipient: $($_.Exception.Message)" "Red"
+    Write-Log "SOLUTION: Verify the email address exists in this tenant" "Yellow"
     Disconnect-ExchangeOnline -Confirm:$false -ErrorAction SilentlyContinue
     exit 1
 }
 
-# Function to process permissions
-function Process-Permissions {
-    param(
-        $Identity,
-        [string]$Type,
-        [string]$TargetUserEmail,
-        [string]$GroupType = ""
-    )
-    
-    $objectName = if ($Identity.PrimarySmtpAddress) { $Identity.PrimarySmtpAddress } else { $Identity.DisplayName }
-    
-    # Retrieve "Send As" permissions
+# Map RecipientTypeDetails to a friendly object type label
+function Get-ObjectTypeLabel {
+    param($RecipientTypeDetails)
+    switch -Regex ([string]$RecipientTypeDetails) {
+        '^SharedMailbox$'                                 { "Shared Mailbox"; break }
+        '^(UserMailbox|LinkedMailbox|RemoteUserMailbox)$' { "User Mailbox"; break }
+        '^(RoomMailbox|EquipmentMailbox)$'                { "Resource Mailbox"; break }
+        '^GroupMailbox$'                                  { "Microsoft 365 Group"; break }
+        'DistributionGroup|MailUniversalSecurityGroup'    { "Distribution Group"; break }
+        default                                           { [string]$RecipientTypeDetails }
+    }
+}
+
+$permissionsReport = [System.Collections.ArrayList]::new()
+
+Write-Log ""
+Write-Log ("=" * 60) "Yellow"
+Write-Log "Processing permissions for: $targetSmtp" "Yellow"
+Write-Log ("=" * 60) "Yellow"
+
+# 1) "Send As" permissions - single server-side query by trustee
+Write-Log "Checking Send As permissions (server-side query)..." "Cyan"
+try {
+    $sendAsPermissions = Get-RecipientPermission -Trustee $targetSmtp -ResultSize Unlimited -ErrorAction Stop |
+        Where-Object { $_.AccessRights -contains 'SendAs' }
+
+    foreach ($permission in $sendAsPermissions) {
+        $obj = $null
+        try {
+            $obj = Get-Recipient -Identity ([string]$permission.Identity) -ErrorAction Stop
+        } catch {
+            Write-Log "Warning: Could not resolve object '$($permission.Identity)': $($_.Exception.Message)" "Yellow"
+        }
+        $isGroup = $obj -and ([string]$obj.RecipientTypeDetails -match 'Group')
+        [void]$permissionsReport.Add([PSCustomObject]@{
+            ObjectType  = if ($obj) { Get-ObjectTypeLabel $obj.RecipientTypeDetails } else { "Unknown" }
+            GroupType   = if ($isGroup) { [string]$obj.RecipientTypeDetails } else { "" }
+            Object      = if ($obj -and $obj.PrimarySmtpAddress) { [string]$obj.PrimarySmtpAddress } else { [string]$permission.Identity }
+            Trustee     = $targetSmtp
+            AccessRight = "Send As"
+        })
+    }
+} catch {
+    Write-Log "Warning: Send As permission query failed: $($_.Exception.Message)" "Yellow"
+}
+
+# 2) "Send on Behalf" permissions - server-side filter on GrantSendOnBehalfTo
+Write-Log "Checking Send on Behalf permissions (server-side query)..." "Cyan"
+$sobFilter = "GrantSendOnBehalfTo -eq '$($targetDN -replace "'", "''")'"
+$sobSources = @(
+    @{ Cmd = 'Get-Mailbox';           Label = $null },
+    @{ Cmd = 'Get-DistributionGroup'; Label = 'Distribution Group' },
+    @{ Cmd = 'Get-UnifiedGroup';      Label = 'Microsoft 365 Group' }
+)
+foreach ($src in $sobSources) {
     try {
-        $sendAsPermissions = Get-RecipientPermission -Identity $Identity.Identity -ErrorAction Stop | 
-            Where-Object { $_.Trustee -eq $TargetUserEmail -and $_.AccessRights -contains 'SendAs' }
-        
-        foreach ($permission in $sendAsPermissions) {
+        $results = & $src.Cmd -Filter $sobFilter -ResultSize Unlimited -ErrorAction Stop
+        foreach ($obj in $results) {
             [void]$permissionsReport.Add([PSCustomObject]@{
-                ObjectType  = $Type
-                GroupType   = $GroupType
-                Object      = $objectName
-                Trustee     = $TargetUserEmail
-                AccessRight = "Send As"
+                ObjectType  = if ($src.Label) { $src.Label } else { Get-ObjectTypeLabel $obj.RecipientTypeDetails }
+                GroupType   = if ($src.Label) { [string]$obj.RecipientTypeDetails } else { "" }
+                Object      = [string]$obj.PrimarySmtpAddress
+                Trustee     = $targetSmtp
+                AccessRight = "Send on Behalf"
             })
         }
     } catch {
-        Write-Host "Warning: Could not check Send As permissions for $objectName : $($_.Exception.Message)" -ForegroundColor Yellow
+        Write-Log "Warning: $($src.Cmd) Send on Behalf query failed: $($_.Exception.Message)" "Yellow"
     }
+}
 
-    # Retrieve "Send on Behalf" permissions
-    if ($Identity.GrantSendOnBehalfTo) {
-        foreach ($delegate in $Identity.GrantSendOnBehalfTo) {
-            try {
-                $delegateRecipient = Get-Recipient -Identity $delegate -ErrorAction Stop
-                if ($delegateRecipient.PrimarySmtpAddress -eq $TargetUserEmail) {
-                    [void]$permissionsReport.Add([PSCustomObject]@{
-                        ObjectType  = $Type
-                        GroupType   = $GroupType
-                        Object      = $objectName
-                        Trustee     = $TargetUserEmail
-                        AccessRight = "Send on Behalf"
-                    })
-                }
-            } catch {
-                Write-Host "Warning: Could not resolve delegate: $delegate" -ForegroundColor Yellow
-            }
+# 3) "Full Access" permissions - enumerate mailboxes once, filter by user server-side
+Write-Log "Checking Full Access permissions (this can take a while on large tenants)..." "Cyan"
+try {
+    $mailboxes = Get-Mailbox -ResultSize Unlimited -ErrorAction Stop
+    Write-Log "Scanning $($mailboxes.Count) mailboxes for Full Access grants..." "Cyan"
+
+    $count = 0
+    foreach ($mailbox in $mailboxes) {
+        $count++
+        if ($count % 200 -eq 0) {
+            Write-Log "  Checked $count of $($mailboxes.Count) mailboxes..." "White"
         }
-    }
-
-    # Retrieve "Full Access" permissions (mailboxes only, not groups)
-    if ($Type -ne "Distribution Group" -and $Type -ne "Microsoft 365 Group") {
         try {
-            $fullAccessPermissions = Get-MailboxPermission -Identity $Identity.Identity -ErrorAction Stop | 
-                Where-Object { 
-                    $_.User -like "*$TargetUserEmail*" -and 
-                    $_.IsInherited -eq $false -and 
-                    $_.AccessRights -contains 'FullAccess' 
-                }
-            
+            $fullAccessPermissions = Get-MailboxPermission -Identity $mailbox.Identity -User $targetSmtp -ErrorAction Stop |
+                Where-Object { $_.IsInherited -eq $false -and $_.AccessRights -contains 'FullAccess' }
+
             foreach ($permission in $fullAccessPermissions) {
                 [void]$permissionsReport.Add([PSCustomObject]@{
-                    ObjectType  = $Type
-                    GroupType   = $GroupType
-                    Object      = $objectName
-                    Trustee     = $TargetUserEmail
+                    ObjectType  = Get-ObjectTypeLabel $mailbox.RecipientTypeDetails
+                    GroupType   = ""
+                    Object      = [string]$mailbox.PrimarySmtpAddress
+                    Trustee     = $targetSmtp
                     AccessRight = "Full Access"
                 })
             }
         } catch {
-            Write-Host "Warning: Could not check Full Access permissions for $objectName : $($_.Exception.Message)" -ForegroundColor Yellow
+            Write-Log "Warning: Could not check Full Access on $($mailbox.PrimarySmtpAddress): $($_.Exception.Message)" "Yellow"
         }
     }
-}
-
-Write-Host "\nProcessing permissions for: $TargetUserEmail" -ForegroundColor Yellow
-Write-Host "=" * 60 -ForegroundColor Yellow
-
-# Process regular mailboxes
-Write-Host "\nChecking user mailboxes..." -ForegroundColor Cyan
-foreach ($mailbox in $mailboxes) {
-    Process-Permissions -Identity $mailbox -Type "User Mailbox" -TargetUserEmail $TargetUserEmail
-}
-
-# Process shared mailboxes
-Write-Host "Checking shared mailboxes..." -ForegroundColor Cyan
-foreach ($sharedMailbox in $sharedMailboxes) {
-    Process-Permissions -Identity $sharedMailbox -Type "Shared Mailbox" -TargetUserEmail $TargetUserEmail
-}
-
-# Process distribution groups
-Write-Host "Checking distribution groups..." -ForegroundColor Cyan
-foreach ($distributionGroup in $distributionGroups) {
-    $groupType = if ($distributionGroup.RecipientTypeDetails) { $distributionGroup.RecipientTypeDetails } else { "Distribution" }
-    Process-Permissions -Identity $distributionGroup -Type "Distribution Group" -TargetUserEmail $TargetUserEmail -GroupType $groupType
-}
-
-# Process Microsoft 365 groups
-Write-Host "Checking Microsoft 365 groups..." -ForegroundColor Cyan
-foreach ($unifiedGroup in $unifiedGroups) {
-    Process-Permissions -Identity $unifiedGroup -Type "Microsoft 365 Group" -TargetUserEmail $TargetUserEmail -GroupType "Unified"
+} catch {
+    Write-Log "FATAL: Could not enumerate mailboxes: $($_.Exception.Message)" "Red"
+    Disconnect-ExchangeOnline -Confirm:$false -ErrorAction SilentlyContinue
+    exit 1
 }
 
 # Display summary
-Write-Host "\n" -NoNewline
-Write-Host "=" * 60 -ForegroundColor Yellow
-Write-Host "SUMMARY" -ForegroundColor Yellow
-Write-Host "=" * 60 -ForegroundColor Yellow
-Write-Host "Total permissions found: $($permissionsReport.Count)" -ForegroundColor Cyan
+Write-Log ""
+Write-Log ("=" * 60) "Yellow"
+Write-Log "SUMMARY" "Yellow"
+Write-Log ("=" * 60) "Yellow"
+Write-Log "Total permissions found: $($permissionsReport.Count)" "Cyan"
 
 if ($permissionsReport.Count -gt 0) {
-    # Display the report
-    Write-Host "\nPermissions Report:" -ForegroundColor Cyan
-    $permissionsReport | Format-Table -AutoSize
-    
+    Write-Log ""
+    Write-Log "Permissions Report:" "Cyan"
+    foreach ($entry in $permissionsReport) {
+        Write-Log ("  {0,-20} {1,-45} {2}" -f $entry.ObjectType, $entry.Object, $entry.AccessRight) "White"
+    }
+
     # Export to CSV
-    $permissionsReport | Export-Csv -Path $outputFile -NoTypeInformation
-    Write-Host "\nReport exported to: $outputFile" -ForegroundColor Green
+    $permissionsReport | Export-Csv -Path $outputFile -NoTypeInformation -Encoding UTF8
+    Write-Log ""
+    Write-Log "Report exported to: $outputFile" "Green"
 } else {
-    Write-Host "\nNo delegate permissions found for $TargetUserEmail" -ForegroundColor Yellow
-    # Create empty CSV with headers
-    [PSCustomObject]@{
-        ObjectType  = ""
-        GroupType   = ""
-        Object      = ""
-        Trustee     = ""
-        AccessRight = ""
-    } | Export-Csv -Path $outputFile -NoTypeInformation
-    Write-Host "Empty report exported to: $outputFile" -ForegroundColor Green
+    Write-Log ""
+    Write-Log "No delegate permissions found for $targetSmtp" "Yellow"
+    # Create CSV with headers only (no blank data row)
+    '"ObjectType","GroupType","Object","Trustee","AccessRight"' | Out-File -FilePath $outputFile -Encoding utf8
+    Write-Log "Empty report (headers only) exported to: $outputFile" "Green"
 }
 
 # Disconnect from Exchange Online (force without confirmation)
-Write-Host "\nDisconnecting from Exchange Online..." -ForegroundColor Yellow
-try {
-    Disconnect-ExchangeOnline -Confirm:$false -ErrorAction Stop | Out-Null
-    Write-Host "Disconnected from Exchange Online" -ForegroundColor Green
-} catch {
-    Write-Host "Note: Disconnect completed (suppressed prompt)" -ForegroundColor Gray
-}
+Write-Log ""
+Write-Log "Disconnecting from Exchange Online..." "Yellow"
+Disconnect-ExchangeOnline -Confirm:$false -ErrorAction SilentlyContinue | Out-Null
+Write-Log "Disconnected from Exchange Online" "Green"
 
 Write-Log "Script completed successfully" "Green"
 

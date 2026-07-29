@@ -26,11 +26,15 @@ try {
 }
 
 # Password expiry
-$domainPolicy = Get-ADDefaultDomainPasswordPolicy
-$maxAge = $domainPolicy.MaxPasswordAge
+$maxAge = $null
+try {
+    $maxAge = (Get-ADDefaultDomainPasswordPolicy -ErrorAction Stop).MaxPasswordAge
+} catch {
+    Write-Log "Could not read domain password policy: $($_.Exception.Message)" "Yellow"
+}
 $pwExpiryStr = "N/A"
 $daysUntilExpiry = $null
-if (-not $user.PasswordNeverExpires -and $user.PasswordLastSet -and $maxAge.TotalDays -gt 0) {
+if (-not $user.PasswordNeverExpires -and $user.PasswordLastSet -and $maxAge -and $maxAge.TotalDays -gt 0) {
     $expiry = $user.PasswordLastSet + $maxAge
     $daysUntilExpiry = [int](($expiry - (Get-Date)).TotalDays)
     $pwExpiryStr = "{0}  ({1} days)" -f $expiry.ToString("yyyy-MM-dd"), $daysUntilExpiry
@@ -43,7 +47,7 @@ $managerName = if ($user.Manager) {
     try { (Get-ADUser $user.Manager).Name } catch { $user.Manager }
 } else { "None" }
 
-# Group count (excluding Domain Users)
+# Group count (MemberOf — does not include the primary group, typically Domain Users)
 $groupCount = ($user.MemberOf | Measure-Object).Count
 
 Write-Host ""
@@ -93,7 +97,7 @@ if (-not $user.Enabled)         { $issues += "DISABLED" }
 if ($user.LockedOut)            { $issues += "LOCKED" }
 if ($user.PasswordExpired)      { $issues += "PASSWORD EXPIRED" }
 if (-not $user.PasswordLastSet) { $issues += "PASSWORD NEVER SET" }
-if ($daysUntilExpiry -ne $null -and $daysUntilExpiry -le 0) { $issues += "PASSWORD EXPIRED" }
+if (-not $user.PasswordExpired -and $daysUntilExpiry -ne $null -and $daysUntilExpiry -le 0) { $issues += "PASSWORD EXPIRED" }
 
 if ($issues.Count -gt 0) {
     Write-Host ("  STATUS: {0}" -f ($issues -join "  |  ")) -ForegroundColor Red

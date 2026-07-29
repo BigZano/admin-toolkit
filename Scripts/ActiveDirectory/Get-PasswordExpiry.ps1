@@ -19,7 +19,11 @@ if (-not (Test-Path $OutputDirectory)) {
     New-Item -Path $OutputDirectory -ItemType Directory -Force | Out-Null
 }
 
-$days = [int]$DaysUntilExpiry
+$days = 0
+if (-not [int]::TryParse($DaysUntilExpiry, [ref]$days)) {
+    Write-Host "Invalid DaysUntilExpiry value '$DaysUntilExpiry' — must be a whole number." -ForegroundColor Red
+    exit 1
+}
 $timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
 $outputFile = Join-Path $OutputDirectory "PasswordExpiry_${days}days_$timestamp.csv"
 $logFile    = Join-Path $OutputDirectory "PasswordExpiry_$timestamp.log"
@@ -39,12 +43,19 @@ try {
 }
 
 Write-Log "Retrieving domain password policy..." "Cyan"
-$domainPolicy = Get-ADDefaultDomainPasswordPolicy
+try {
+    $domainPolicy = Get-ADDefaultDomainPasswordPolicy -ErrorAction Stop
+} catch {
+    Write-Log "Could not read domain password policy: $($_.Exception.Message)" "Red"
+    exit 1
+}
 $maxAge = $domainPolicy.MaxPasswordAge
 
 if ($maxAge.TotalDays -eq 0) {
     Write-Log "Domain password policy has no maximum age set (passwords never expire by policy)." "Yellow"
 }
+
+$fgppWarned = $false
 
 Write-Log "Scanning all enabled users..." "Cyan"
 
@@ -57,7 +68,15 @@ try {
     Where-Object { $_.PasswordLastSet -ne $null } |
     ForEach-Object {
         # Check for Fine-Grained Password Policy first
-        $fgpp = Get-ADUserResultantPasswordPolicy $_ -ErrorAction SilentlyContinue
+        $fgpp = $null
+        try {
+            $fgpp = Get-ADUserResultantPasswordPolicy $_ -ErrorAction Stop
+        } catch {
+            if (-not $script:fgppWarned) {
+                Write-Log "Cannot read Fine-Grained Password Policies ($($_.Exception.Message)) — falling back to domain policy for affected users." "Yellow"
+                $script:fgppWarned = $true
+            }
+        }
         $effectiveMaxAge = if ($fgpp) { $fgpp.MaxPasswordAge } else { $maxAge }
 
         if ($effectiveMaxAge.TotalDays -eq 0) { return }

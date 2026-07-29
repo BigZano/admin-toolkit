@@ -25,52 +25,48 @@ function Write-Log {
 Write-Log "Reading audit policy via auditpol.exe..." "Cyan"
 
 try {
-    $raw = auditpol.exe /get /category:* 2>&1
+    # /r emits CSV (structurally locale-stable), avoiding fragile parsing of the aligned table output
+    $raw = auditpol.exe /get /category:* /r 2>&1
     if ($LASTEXITCODE -ne 0) {
         Write-Log "auditpol failed. Ensure you are running as Administrator." "Red"; exit 1
     }
 
+    $rows = $raw | Where-Object { "$_".Trim() } | ConvertFrom-Csv
+
     $report = [System.Collections.Generic.List[object]]::new()
-    $currentCategory = ""
 
-    foreach ($line in $raw) {
-        if ([string]::IsNullOrWhiteSpace($line)) { continue }
+    foreach ($row in $rows) {
+        $subcat  = $row.Subcategory
+        $setting = $row.'Inclusion Setting'
+        if ([string]::IsNullOrWhiteSpace($subcat) -or [string]::IsNullOrWhiteSpace($setting)) { continue }
 
-        # Category header lines (no leading spaces, ends without a setting)
-        if ($line -notmatch '^\s' -and $line -notmatch 'No Auditing|Success|Failure') {
-            $currentCategory = $line.Trim()
-            continue
+        $status = switch ($setting) {
+            "Success and Failure" { "Full" }
+            "Success"             { "Partial" }
+            "Failure"             { "Partial" }
+            "No Auditing"         { "Off" }
+            default               { $setting }
         }
 
-        # Subcategory setting line
-        if ($line -match '^\s+(.+?)\s{2,}(No Auditing|Success and Failure|Success|Failure)\s*$') {
-            $subcat  = $Matches[1].Trim()
-            $setting = $Matches[2].Trim()
-
-            $status = switch ($setting) {
-                "Success and Failure" { "Full" }
-                "Success"             { "Partial" }
-                "Failure"             { "Partial" }
-                "No Auditing"         { "Off" }
-                default               { $setting }
-            }
-
-            $color = switch ($status) {
-                "Full"    { "Green" }
-                "Partial" { "Yellow" }
-                "Off"     { "Red" }
-                default   { "Gray" }
-            }
-
-            Write-Host ("  {0,-35} {1,-25} [{2}]" -f $subcat, $currentCategory, $setting) -ForegroundColor $color
-
-            $report.Add([PSCustomObject]@{
-                Category    = $currentCategory
-                Subcategory = $subcat
-                Setting     = $setting
-                Status      = $status
-            })
+        $color = switch ($status) {
+            "Full"    { "Green" }
+            "Partial" { "Yellow" }
+            "Off"     { "Red" }
+            default   { "Gray" }
         }
+
+        Write-Host ("  {0,-45} [{1}]" -f $subcat, $setting) -ForegroundColor $color
+
+        $report.Add([PSCustomObject]@{
+            Subcategory     = $subcat
+            SubcategoryGuid = $row.'Subcategory GUID'
+            Setting         = $setting
+            Status          = $status
+        })
+    }
+
+    if ($report.Count -eq 0) {
+        Write-Log "auditpol returned no parseable rows." "Red"; exit 1
     }
 
     $full    = @($report | Where-Object { $_.Status -eq "Full" })
@@ -94,7 +90,7 @@ try {
         Write-Host ""
         Write-Host "  WARNING - Critical subcategories not audited:" -ForegroundColor Red
         $criticalOff | ForEach-Object {
-            Write-Host ("  {0} [{1}]" -f $_.Subcategory, $_.Category) -ForegroundColor Red
+            Write-Host ("  {0}" -f $_.Subcategory) -ForegroundColor Red
         }
     }
 

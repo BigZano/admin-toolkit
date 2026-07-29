@@ -24,6 +24,13 @@ function Write-Log {
     Write-Host $Message -ForegroundColor $Color
 }
 
+# Hyper-V queries silently return no results without elevation, so fail loudly instead.
+$currentPrincipal = [Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
+if (-not $currentPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+    Write-Log "This script requires an elevated (Administrator) session — Hyper-V cmdlets return empty results without it." "Red"
+    exit 1
+}
+
 $getParams = @{ ErrorAction = "Stop" }
 if (-not [string]::IsNullOrEmpty($ComputerName)) { $getParams["ComputerName"] = $ComputerName }
 if (-not [string]::IsNullOrEmpty($VMName))       { $getParams["Name"]         = $VMName }

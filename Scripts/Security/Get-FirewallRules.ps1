@@ -33,6 +33,12 @@ $dir = switch ($Direction.ToLower()) {
     default    { "Inbound" }
 }
 
+try {
+    Import-Module NetSecurity -ErrorAction Stop
+} catch {
+    Write-Log "NetSecurity module not available: $($_.Exception.Message)" "Red"; exit 1
+}
+
 Write-Log "Retrieving $dir firewall rules (enabled only: $filterEnabled)..." "Cyan"
 
 try {
@@ -41,13 +47,20 @@ try {
 
     $rules = Get-NetFirewallRule @ruleFilter -ErrorAction Stop
 
-    $report = foreach ($rule in ($rules | Sort-Object DisplayName)) {
-        $portFilter    = $rule | Get-NetFirewallPortFilter    -ErrorAction SilentlyContinue
-        $addressFilter = $rule | Get-NetFirewallAddressFilter -ErrorAction SilentlyContinue
-        $appFilter     = $rule | Get-NetFirewallApplicationFilter -ErrorAction SilentlyContinue
+    # Fetch all filters once and index by rule InstanceID (3 CIM queries total instead
+    # of 3 per rule, which takes minutes on a default rule set)
+    Write-Log "Loading filter details for $($rules.Count) rule(s)..." "Cyan"
+    $portIdx = @{}; $addrIdx = @{}; $appIdx = @{}
+    foreach ($f in @(Get-NetFirewallPortFilter -All -ErrorAction SilentlyContinue))        { $portIdx[$f.InstanceID] = $f }
+    foreach ($f in @(Get-NetFirewallAddressFilter -All -ErrorAction SilentlyContinue))     { $addrIdx[$f.InstanceID] = $f }
+    foreach ($f in @(Get-NetFirewallApplicationFilter -All -ErrorAction SilentlyContinue)) { $appIdx[$f.InstanceID] = $f }
 
-        $remoteAddr = $addressFilter.RemoteAddress -join ", "
-        $ports      = "$($portFilter.Protocol):$($portFilter.LocalPort)" -replace ":Any", "" -replace "^:", ""
+    $report = foreach ($rule in ($rules | Sort-Object DisplayName)) {
+        $portFilter    = $portIdx[$rule.InstanceID]
+        $addressFilter = $addrIdx[$rule.InstanceID]
+        $appFilter     = $appIdx[$rule.InstanceID]
+
+        $remoteAddr = @($addressFilter.RemoteAddress) -join ", "
         $program    = if ($appFilter.Program -and $appFilter.Program -ne "Any") { $appFilter.Program } else { "Any" }
 
         # Flag risky rules: allow any remote address, no program restriction, enabled
@@ -55,9 +68,10 @@ try {
 
         [PSCustomObject]@{
             Name         = $rule.DisplayName
-            Profile      = $rule.Profile
+            Profile      = "$($rule.Profile)"
             Protocol     = $portFilter.Protocol
-            LocalPort    = $portFilter.LocalPort
+            LocalPort    = (@($portFilter.LocalPort) -join ", ")
+            RemotePort   = (@($portFilter.RemotePort) -join ", ")
             RemoteAddr   = $remoteAddr
             Program      = $program
             Enabled      = $rule.Enabled
@@ -87,8 +101,12 @@ try {
         Write-Host ("  {0,-50} proto: {1,-6}{2}" -f $_.Name, $_.Protocol, $portStr) -ForegroundColor $color
     }
 
-    $report | Export-Csv -Path $outputFile -NoTypeInformation -Encoding UTF8
-    Write-Host ""; Write-Log "Report saved to: $outputFile" "Green"
+    if ($report) {
+        $report | Export-Csv -Path $outputFile -NoTypeInformation -Encoding UTF8
+        Write-Host ""; Write-Log "Report saved to: $outputFile" "Green"
+    } else {
+        Write-Log "No rules matched; no CSV report generated." "Yellow"
+    }
 } catch {
     Write-Log "Error: $($_.Exception.Message)" "Red"; exit 1
 }

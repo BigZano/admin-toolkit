@@ -40,21 +40,47 @@ $portNames = @{
 $commonPorts = $portNames.Keys | Sort-Object
 
 # Resolve port list
-$ports = if ($PortRange -eq "common") {
-    $commonPorts
+$ports = @()
+if ($PortRange -eq "common") {
+    $ports = $commonPorts
 } elseif ($PortRange -match '^\d+-\d+$') {
     $parts = $PortRange -split '-'
-    [int]$parts[0]..[int]$parts[1]
+    $lo = 0; $hi = 0
+    if (-not [int]::TryParse($parts[0], [ref]$lo) -or -not [int]::TryParse($parts[1], [ref]$hi) -or
+        $lo -lt 1 -or $hi -gt 65535 -or $lo -gt $hi) {
+        Write-Log "Invalid port range: '$PortRange' (expected e.g. 1-1024)" "Red"; exit 1
+    }
+    $ports = $lo..$hi
 } else {
-    $PortRange -split ',' | ForEach-Object { [int]$_.Trim() }
+    foreach ($p in ($PortRange -split ',')) {
+        $n = 0
+        if (-not [int]::TryParse($p.Trim(), [ref]$n) -or $n -lt 1 -or $n -gt 65535) {
+            Write-Log "Invalid port value: '$($p.Trim())' (expected 1-65535, a range like 1-1024, or 'common')" "Red"; exit 1
+        }
+        $ports += $n
+    }
+}
+
+# Fail fast if the host cannot be resolved (otherwise every port errors silently
+# and the scan reports a misleading "0 open ports")
+try {
+    [System.Net.Dns]::GetHostAddresses($ComputerName) | Out-Null
+} catch {
+    Write-Log "Cannot resolve host: $ComputerName" "Red"; exit 1
 }
 
 Write-Log "Scanning $($ports.Count) ports on: $ComputerName" "Cyan"
+if ($ports.Count -gt 1024) {
+    Write-Log "Large scan: $($ports.Count) ports sequentially at up to 500 ms each; this may take a while." "Yellow"
+}
 Write-Host ""
 
 $openPorts = [System.Collections.Generic.List[object]]::new()
 
+$scanned = 0
 foreach ($port in $ports) {
+    $scanned++
+    if ($scanned % 100 -eq 0) { Write-Log "  Progress: $scanned / $($ports.Count) ports scanned" "DarkGray" }
     $tcp = New-Object System.Net.Sockets.TcpClient
     try {
         $connect = $tcp.BeginConnect($ComputerName, $port, $null, $null)

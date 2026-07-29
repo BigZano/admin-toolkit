@@ -19,7 +19,7 @@ try {
 }
 
 try {
-    $user  = Get-ADUser  -Identity $Username  -Properties DisplayName -ErrorAction Stop
+    $user  = Get-ADUser  -Identity $Username  -Properties DisplayName, MemberOf -ErrorAction Stop
     $group = Get-ADGroup -Identity $GroupName -Properties Description  -ErrorAction Stop
 } catch {
     Write-Log "Lookup failed: $($_.Exception.Message)" "Red"; exit 1
@@ -33,12 +33,9 @@ if ($group.Description) {
 }
 Write-Host ""
 
-# Check if already a member
-$isMember = Get-ADGroupMember -Identity $GroupName -Recursive |
-    Where-Object { $_.SamAccountName -eq $Username }
-
-if ($isMember) {
-    Write-Log "$($user.SamAccountName) is already a member of '$($group.Name)'." "Yellow"
+# Check if already a direct member (MemberOf check — no group enumeration needed)
+if ($user.MemberOf -contains $group.DistinguishedName) {
+    Write-Log "$($user.SamAccountName) is already a direct member of '$($group.Name)'." "Yellow"
     exit 0
 }
 

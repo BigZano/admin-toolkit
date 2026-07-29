@@ -6,16 +6,49 @@ param(
     [Parameter(Mandatory=$true)]
     [string]$Port,
     [Parameter(Mandatory=$false)]
-    [string]$TimeoutSeconds = "3"
+    [string]$TimeoutSeconds = "3",
+    [Parameter(Mandatory=$false)]
+    [string]$OutputDirectory = ""
 )
+
+if ([string]::IsNullOrEmpty($OutputDirectory)) {
+    $OutputDirectory = if ($IsWindows -or $env:OS -match "Windows") {
+        Join-Path $env:USERPROFILE "Documents\AdminToolReports"
+    } else { Join-Path $env:HOME "Documents/AdminToolReports" }
+}
+if (-not (Test-Path $OutputDirectory)) { New-Item -Path $OutputDirectory -ItemType Directory -Force | Out-Null }
+
+$timestamp  = Get-Date -Format "yyyyMMdd_HHmmss"
+$safeName   = $ComputerName -replace '[\\/:*?"<>|]', '_'
+$outputFile = Join-Path $OutputDirectory "PortTest_${safeName}_$timestamp.csv"
+$logFile    = Join-Path $OutputDirectory "PortTest_${safeName}_$timestamp.log"
 
 function Write-Log {
     param([string]$Message, [string]$Color = "White")
-    Write-Host "$(Get-Date -Format 'HH:mm:ss') $Message" -ForegroundColor $Color
+    "[$( Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] $Message" | Out-File $logFile -Append
+    Write-Host $Message -ForegroundColor $Color
 }
 
-$ports   = $Port -split ',' | ForEach-Object { [int]$_.Trim() }
-$timeout = [int]$TimeoutSeconds * 1000
+$timeoutSec = 0
+if (-not [int]::TryParse($TimeoutSeconds, [ref]$timeoutSec) -or $timeoutSec -lt 1) {
+    Write-Log "Invalid TimeoutSeconds value: '$TimeoutSeconds' (expected an integer >= 1)" "Red"; exit 1
+}
+$ports = @()
+foreach ($p in ($Port -split ',')) {
+    $n = 0
+    if (-not [int]::TryParse($p.Trim(), [ref]$n) -or $n -lt 1 -or $n -gt 65535) {
+        Write-Log "Invalid port value: '$($p.Trim())' (expected 1-65535)" "Red"; exit 1
+    }
+    $ports += $n
+}
+$timeout = $timeoutSec * 1000
+
+# Fail fast on unresolvable hosts (otherwise every port reports a misleading error)
+try {
+    [System.Net.Dns]::GetHostAddresses($ComputerName) | Out-Null
+} catch {
+    Write-Log "Cannot resolve host: $ComputerName" "Red"; exit 1
+}
 
 Write-Log "Testing $($ports.Count) port(s) on: $ComputerName  (timeout: ${TimeoutSeconds}s)" "Cyan"
 Write-Host ""
@@ -56,3 +89,6 @@ Write-Host ""
 $open   = @($results | Where-Object { $_.Status -eq "Open" })
 $closed = @($results | Where-Object { $_.Status -ne "Open" })
 Write-Log "Open: $($open.Count)  |  Closed/Filtered: $($closed.Count)" "$(if ($open.Count -eq $ports.Count) { 'Green' } elseif ($open.Count -eq 0) { 'Red' } else { 'Yellow' })"
+
+$results | Export-Csv -Path $outputFile -NoTypeInformation -Encoding UTF8
+Write-Log "Report saved to: $outputFile" "Green"

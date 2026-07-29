@@ -18,6 +18,11 @@ Write-Host ("  Sessions on: {0}" -f $target) -ForegroundColor Cyan
 Write-Host ""
 
 try {
+    if (-not (Get-Command quser -ErrorAction SilentlyContinue)) {
+        Write-Log "quser.exe not found on this system (not available on all Windows editions)." "Red"
+        exit 1
+    }
+
     # quser works locally and remotely, output needs parsing
     $raw = if ($isLocal) {
         quser 2>&1
@@ -25,9 +30,15 @@ try {
         quser /server:$target 2>&1
     }
 
-    if ($LASTEXITCODE -ne 0 -or $raw -match "No User exists") {
+    # quser exits 1 both for "no sessions" and for real failures — distinguish them.
+    if ($raw -match "No User exists") {
         Write-Log "No active sessions found on $target." "Green"
         exit 0
+    }
+    if ($LASTEXITCODE -ne 0) {
+        Write-Log "quser failed on ${target}: $($raw -join ' ')" "Red"
+        Write-Log "Ensure the host is reachable and RPC / Remote Desktop Services access is allowed." "Yellow"
+        exit 1
     }
 
     # Parse quser output — fixed-width columns
@@ -80,6 +91,6 @@ try {
     }
 } catch {
     Write-Log "Error: $($_.Exception.Message)" "Red"
-    Write-Log "Ensure Remote Registry and Remote Desktop services are accessible on $target." "Yellow"
+    Write-Log "Ensure the host is reachable and RPC / Remote Desktop Services access is allowed on $target." "Yellow"
     exit 1
 }

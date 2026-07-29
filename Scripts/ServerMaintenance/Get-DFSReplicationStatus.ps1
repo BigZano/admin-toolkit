@@ -52,16 +52,27 @@ foreach ($group in $groups | Sort-Object GroupName) {
     try {
         $members = Get-DfsrMember -GroupName $group.GroupName -ErrorAction Stop
         $connections = Get-DfsrConnection -GroupName $group.GroupName -ErrorAction SilentlyContinue
+        $folders = @(Get-DfsrReplicatedFolder -GroupName $group.GroupName -ErrorAction SilentlyContinue)
 
         foreach ($member in $members | Sort-Object ComputerName) {
             $inbound  = @($connections | Where-Object { $_.ReceivingMember -eq $member.ComputerName })
             $outbound = @($connections | Where-Object { $_.SendingMember   -eq $member.ComputerName })
 
+            # Get-DfsrBacklog needs a concrete source/destination pair and folder — no wildcards —
+            # and returns one record per backlogged file (capped at 100 per query).
             $backlog = 0
-            try {
-                $bl = Get-DfsrBacklog -GroupName $group.GroupName -FolderName * -SourceComputerName $member.ComputerName -DestinationComputerName * -ErrorAction SilentlyContinue
-                $backlog = if ($bl) { ($bl | Measure-Object -Property BacklogFileCount -Sum).Sum } else { 0 }
-            } catch { }
+            foreach ($dest in ($members | Where-Object { $_.ComputerName -ne $member.ComputerName })) {
+                foreach ($folder in $folders) {
+                    try {
+                        $bl = Get-DfsrBacklog -GroupName $group.GroupName -FolderName $folder.FolderName `
+                            -SourceComputerName $member.ComputerName -DestinationComputerName $dest.ComputerName `
+                            -ErrorAction Stop
+                        $backlog += @($bl).Count
+                    } catch {
+                        Write-Log "    Backlog query failed ($($member.ComputerName) -> $($dest.ComputerName), folder '$($folder.FolderName)'): $($_.Exception.Message)" "Yellow"
+                    }
+                }
+            }
 
             $color = if ($backlog -gt 100) { "Red" } elseif ($backlog -gt 0) { "Yellow" } else { "Green" }
 

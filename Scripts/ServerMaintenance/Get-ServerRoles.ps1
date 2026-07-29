@@ -24,6 +24,13 @@ function Write-Log {
     Write-Host $Message -ForegroundColor $Color
 }
 
+try {
+    Import-Module ServerManager -ErrorAction Stop
+} catch {
+    Write-Log "ServerManager module not found — this script requires Windows Server (Get-WindowsFeature is not available on client editions such as Windows 11)." "Red"
+    exit 1
+}
+
 $getParams = @{ ErrorAction = "Stop" }
 if (-not [string]::IsNullOrEmpty($ComputerName)) { $getParams["ComputerName"] = $ComputerName }
 
@@ -36,7 +43,8 @@ try {
 }
 
 if (-not [string]::IsNullOrEmpty($FilterName)) {
-    $features = $features | Where-Object { $_.DisplayName -match $FilterName -or $_.Name -match $FilterName }
+    $pattern  = [regex]::Escape($FilterName)
+    $features = $features | Where-Object { $_.DisplayName -match $pattern -or $_.Name -match $pattern }
 }
 
 $roles        = @($features | Where-Object { $_.FeatureType -eq "Role" })

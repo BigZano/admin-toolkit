@@ -49,18 +49,29 @@ try {
 Write-Log "Retrieving group memberships for $($user.DisplayName)..." "Cyan"
 
 try {
-    $groups = Get-ADPrincipalGroupMembership -Identity $Username |
-        Get-ADGroup -Properties Description, GroupCategory, GroupScope |
-        Sort-Object Name |
+    $groups = Get-ADPrincipalGroupMembership -Identity $Username -ErrorAction Stop |
         ForEach-Object {
-            [PSCustomObject]@{
-                GroupName    = $_.Name
-                Category     = $_.GroupCategory
-                Scope        = $_.GroupScope
-                Description  = $_.Description
-                DistinguishedName = $_.DistinguishedName
+            $entry = $_
+            try {
+                $g = Get-ADGroup $entry -Properties Description, GroupCategory, GroupScope -ErrorAction Stop
+                [PSCustomObject]@{
+                    GroupName    = $g.Name
+                    Category     = $g.GroupCategory
+                    Scope        = $g.GroupScope
+                    Description  = $g.Description
+                    DistinguishedName = $g.DistinguishedName
+                }
+            } catch {
+                Write-Log "  Could not resolve group '$entry': $($_.Exception.Message)" "Yellow"
+                [PSCustomObject]@{
+                    GroupName    = "$entry"
+                    Category     = "<unresolved>"
+                    Scope        = ""
+                    Description  = ""
+                    DistinguishedName = "$entry"
+                }
             }
-        }
+        } | Sort-Object GroupName
 
     Write-Log "Member of $($groups.Count) groups." "Green"
     Write-Host ""

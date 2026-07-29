@@ -41,25 +41,27 @@ try {
 Write-Log "Generating RSoP for computer: $ComputerName" "Cyan"
 Write-Log "This may take a moment..." "Yellow"
 
+$xmlPath = Join-Path $OutputDirectory "ComputerGPOs_${ComputerName}_$timestamp.tmp.xml"
 try {
     # Generate HTML RSoP report for the computer scope
     Get-GPResultantSetOfPolicy -Computer $ComputerName -ReportType HTML -Path $htmlReport -ErrorAction Stop
     Write-Log "HTML RSoP report saved to: $htmlReport" "Green"
 
     # Parse applied GPOs from XML for console display and CSV
-    $xmlPath = [System.IO.Path]::GetTempFileName()
     Get-GPResultantSetOfPolicy -Computer $ComputerName -ReportType XML -Path $xmlPath -ErrorAction Stop
 
     [xml]$rsop = Get-Content $xmlPath
-    Remove-Item $xmlPath -Force
 
-    $appliedGPOs = $rsop.Rsop.ComputerResults.GPO | ForEach-Object {
+    # Guard against an empty result set (piping $null would produce one blank row);
+    # XML booleans are the strings "true"/"false" - parse to real booleans.
+    $gpoNodes = @($rsop.Rsop.ComputerResults.GPO | Where-Object { $_ })
+    $appliedGPOs = $gpoNodes | ForEach-Object {
         [PSCustomObject]@{
-            Name        = $_.Name
-            Enabled     = $_.Enabled
-            IsValid     = $_.IsValid
-            Version     = $_.Version.AD
-            AccessDenied = $_.AccessDenied
+            Name         = $_.Name
+            Enabled      = ($_.Enabled -eq 'true')
+            IsValid      = ($_.IsValid -eq 'true')
+            Version      = $_.VersionDirectory
+            AccessDenied = ($_.AccessDenied -eq 'true')
         }
     } | Sort-Object Name
 
@@ -76,11 +78,17 @@ try {
         Write-Host ("  {0}{1}" -f $_.Name, $flag) -ForegroundColor $color
     }
 
-    $appliedGPOs | Export-Csv -Path $csvReport -NoTypeInformation -Encoding UTF8
-    Write-Host ""
-    Write-Log "CSV report saved to: $csvReport" "Green"
+    if ($appliedGPOs) {
+        $appliedGPOs | Export-Csv -Path $csvReport -NoTypeInformation -Encoding UTF8
+        Write-Host ""
+        Write-Log "CSV report saved to: $csvReport" "Green"
+    } else {
+        Write-Log "No GPO results returned for $ComputerName - CSV not written." "Yellow"
+    }
 } catch {
     Write-Log "Error: $($_.Exception.Message)" "Red"
-    Write-Log "Ensure the computer is reachable and you have remote admin rights." "Yellow"
+    Write-Log "Ensure the computer is reachable, you have local admin rights on it, and this session is elevated." "Yellow"
     exit 1
+} finally {
+    if (Test-Path $xmlPath) { Remove-Item $xmlPath -Force -ErrorAction SilentlyContinue }
 }

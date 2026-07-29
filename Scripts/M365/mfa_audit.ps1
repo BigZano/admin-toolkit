@@ -8,9 +8,9 @@ param(
 # Set output directory
 if ([string]::IsNullOrEmpty($OutputDirectory)) {
     if ($IsWindows -or $env:OS -match "Windows") {
-        $OutputDirectory = Join-Path -Path $env:USERPROFILE -ChildPath "Documents\M365Reports"
+        $OutputDirectory = Join-Path -Path $env:USERPROFILE -ChildPath "Documents\AdminToolReports"
     } else {
-        $OutputDirectory = Join-Path -Path $env:HOME -ChildPath "Documents/M365Reports"
+        $OutputDirectory = Join-Path -Path $env:HOME -ChildPath "Documents/AdminToolReports"
     }
 }
 
@@ -35,6 +35,7 @@ function Write-Log {
 try {
     Import-Module Microsoft.Graph.Authentication -ErrorAction Stop
     Import-Module Microsoft.Graph.Users -ErrorAction Stop
+    Import-Module Microsoft.Graph.Identity.SignIns -ErrorAction Stop
     Write-Log "Successfully imported Microsoft Graph modules" "Green"
 } catch {
     Write-Log "FATAL: Failed to import modules: $($_.Exception.Message)" "Red"
@@ -65,8 +66,6 @@ try {
 
 # Get licensed users
 Write-Log "Retrieving licensed users..." "Yellow"
-# Get licensed users
-Write-Log "Retrieving licensed users..." "Yellow"
 try {
     $licensedUsers = Get-MgUser -All `
                                 -Filter "accountEnabled eq true" `
@@ -79,7 +78,7 @@ try {
     Write-Log "ERROR: Failed to retrieve users: $($_.Exception.Message)" "Red"
     Write-Log "SOLUTION: Verify User.Read.All permission is granted and consented" "Yellow"
     Disconnect-MgGraph | Out-Null
-    exit 2
+    exit 1
 }
 
 # Check MFA status for each user
@@ -92,10 +91,10 @@ Write-Log "Checking MFA status for each user..." "Yellow"
 
 foreach ($user in $licensedUsers) {
     $count++
-    Write-Progress -Activity "Checking MFA Status" `
-                   -Status "$count of $total - $($user.UserPrincipalName)" `
-                   -PercentComplete (($count / $total) * 100)
-    
+    if ($count % 100 -eq 0) {
+        Write-Log "  Processing user $count of $total..." "White"
+    }
+
     $mfaStatus = "Disabled"
     $authMethods = @()
     
@@ -108,8 +107,8 @@ foreach ($user in $licensedUsers) {
             }
             
             # Check for strong MFA methods
-            if ($methods | Where-Object { 
-                $_.AdditionalProperties['@odata.type'] -match 'microsoftAuthenticatorAuthenticationMethod|phoneAuthenticationMethod|fido2AuthenticationMethod' 
+            if ($methods | Where-Object {
+                $_.AdditionalProperties['@odata.type'] -match 'microsoftAuthenticatorAuthenticationMethod|phoneAuthenticationMethod|fido2AuthenticationMethod|softwareOathAuthenticationMethod|windowsHelloForBusinessAuthenticationMethod'
             }) {
                 $mfaStatus = "Enabled"
             }
@@ -129,13 +128,11 @@ foreach ($user in $licensedUsers) {
     })
 }
 
-Write-Progress -Activity "Checking MFA Status" -Completed
-
 # Sort and export results
 $sortedResults = $usersWithMfaStatus | Sort-Object MFAStatus, DisplayName
 
 try {
-    $sortedResults | Export-Csv -Path $outputFile -NoTypeInformation -ErrorAction Stop
+    $sortedResults | Export-Csv -Path $outputFile -NoTypeInformation -Encoding UTF8 -ErrorAction Stop
     Write-Log "Results exported to: $outputFile" "Green"
     
     # Generate summary statistics
@@ -162,12 +159,15 @@ try {
 } catch {
     Write-Log "FATAL: Failed to export results: $($_.Exception.Message)" "Red"
     Disconnect-MgGraph | Out-Null
-    exit 2
+    exit 1
 }
 
 # Cleanup
 Disconnect-MgGraph | Out-Null
 Write-Log "Disconnected from Microsoft Graph" "Green"
+if ($errors -gt 0) {
+    Write-Log "WARNING: MFA status could not be determined for $errors user(s); they are marked 'Error retrieving' in the report" "Yellow"
+}
 Write-Log "Script completed successfully" "Green"
 
 exit 0

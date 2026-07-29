@@ -27,8 +27,9 @@ function Write-Log {
 
 Write-Log "Gathering system info from: $target" "Cyan"
 
+$cimParams = @{}
 try {
-    $cimParams = if ($target -ne $env:COMPUTERNAME) { @{ CimSession = New-CimSession -ComputerName $target } } else { @{} }
+    if ($target -ne $env:COMPUTERNAME) { $cimParams = @{ CimSession = New-CimSession -ComputerName $target } }
 
     $os      = Get-CimInstance Win32_OperatingSystem @cimParams
     $cs      = Get-CimInstance Win32_ComputerSystem @cimParams
@@ -37,7 +38,7 @@ try {
     $disks   = Get-CimInstance Win32_LogicalDisk @cimParams -Filter "DriveType=3"
 
     $uptime  = (Get-Date) - $os.LastBootUpTime
-    $uptimeStr = "{0}d {1}h {2}m" -f [int]$uptime.TotalDays, $uptime.Hours, $uptime.Minutes
+    $uptimeStr = "{0}d {1}h {2}m" -f $uptime.Days, $uptime.Hours, $uptime.Minutes
     $ramGB   = [math]::Round($cs.TotalPhysicalMemory / 1GB, 1)
     $freeGB  = [math]::Round($os.FreePhysicalMemory / 1MB, 1)
 
@@ -49,14 +50,14 @@ try {
     $fields = [ordered]@{
         "OS"              = "$($os.Caption) (Build $($os.BuildNumber))"
         "OS Architecture" = $os.OSArchitecture
-        "Install Date"    = $os.InstallDate.ToString("yyyy-MM-dd")
+        "Install Date"    = if ($os.InstallDate) { $os.InstallDate.ToString("yyyy-MM-dd") } else { "?" }
         "Last Boot"       = "$($os.LastBootUpTime.ToString('yyyy-MM-dd HH:mm'))  (up $uptimeStr)"
         "Domain / WG"     = if ($cs.PartOfDomain) { $cs.Domain } else { "$($cs.Workgroup) [Workgroup]" }
         "Manufacturer"    = $cs.Manufacturer
         "Model"           = $cs.Model
         "CPU"             = "$($cpu.Name.Trim())  ($($cpu.NumberOfCores) cores / $($cpu.NumberOfLogicalProcessors) logical)"
         "RAM"             = "$ramGB GB total  |  $freeGB GB free"
-        "BIOS"            = "$($bios.SMBIOSBIOSVersion)  [$($bios.ReleaseDate.ToString('yyyy-MM-dd'))]"
+        "BIOS"            = "$($bios.SMBIOSBIOSVersion)  [$(if ($bios.ReleaseDate) { $bios.ReleaseDate.ToString('yyyy-MM-dd') } else { '?' })]"
         "Serial Number"   = $bios.SerialNumber
         "Logged In User"  = $cs.UserName
     }
@@ -100,8 +101,8 @@ try {
 
     $record | Export-Csv -Path $outputFile -NoTypeInformation -Encoding UTF8
     Write-Host ""; Write-Log "Report saved to: $outputFile" "Green"
-
-    if ($cimParams.ContainsKey("CimSession")) { Remove-CimSession $cimParams["CimSession"] }
 } catch {
     Write-Log "Error: $($_.Exception.Message)" "Red"; exit 1
+} finally {
+    if ($cimParams.ContainsKey("CimSession")) { Remove-CimSession $cimParams["CimSession"] -ErrorAction SilentlyContinue }
 }

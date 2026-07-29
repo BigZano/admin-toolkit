@@ -17,9 +17,18 @@ function Write-Log {
 function Show-AccountStatus {
     param($User)
     $pwExpiry = "N/A"
-    if (-not $User.PasswordNeverExpires -and $User.PasswordLastSet) {
-        $maxAge = (Get-ADDefaultDomainPasswordPolicy).MaxPasswordAge
-        $expiry = $User.PasswordLastSet + $maxAge
+    if (-not $script:domainMaxAgeChecked) {
+        $script:domainMaxAgeChecked = $true
+        try {
+            $script:domainMaxAge = (Get-ADDefaultDomainPasswordPolicy -ErrorAction Stop).MaxPasswordAge
+        } catch {
+            Write-Log "Could not read domain password policy: $($_.Exception.Message)" "Yellow"
+            $script:domainMaxAge = $null
+        }
+    }
+    if (-not $User.PasswordNeverExpires -and $User.PasswordLastSet -and
+        $script:domainMaxAge -and $script:domainMaxAge.TotalDays -gt 0) {
+        $expiry = $User.PasswordLastSet + $script:domainMaxAge
         $daysLeft = [int](($expiry - (Get-Date)).TotalDays)
         $pwExpiry = "$($expiry.ToString('yyyy-MM-dd'))  ($daysLeft days)"
     } elseif ($User.PasswordNeverExpires) {
@@ -63,6 +72,7 @@ Write-Host ("=" * 55) -ForegroundColor DarkGray
 Show-AccountStatus $user
 
 $actions = [System.Collections.Generic.List[string]]::new()
+$hadError = $false
 
 # Unlock if locked
 if ($user.LockedOut) {
@@ -72,6 +82,7 @@ if ($user.LockedOut) {
         $actions.Add("Unlocked")
     } catch {
         Write-Log "Failed to unlock: $($_.Exception.Message)" "Red"
+        $hadError = $true
     }
 }
 
@@ -83,37 +94,57 @@ if (-not $user.Enabled) {
 
 # Reset password if provided
 if (-not [string]::IsNullOrEmpty($NewPassword)) {
+    $pwReset = $false
     try {
         $secure = ConvertTo-SecureString $NewPassword -AsPlainText -Force
         Set-ADAccountPassword -Identity $Username -NewPassword $secure -Reset -ErrorAction Stop
+        $pwReset = $true
+    } catch {
+        Write-Log "Failed to reset password: $($_.Exception.Message)" "Red"
+        $hadError = $true
+    }
 
+    if ($pwReset) {
         $mustChange = $ForceChangeAtLogon -eq "true" -or $ForceChangeAtLogon -eq "1"
         if ($mustChange) {
-            Set-ADUser -Identity $Username -ChangePasswordAtLogon $true -ErrorAction Stop
-            Write-Log "Password reset. User must change at next logon." "Green"
-            $actions.Add("Password reset (force change)")
+            try {
+                Set-ADUser -Identity $Username -ChangePasswordAtLogon $true -ErrorAction Stop
+                Write-Log "Password reset. User must change at next logon." "Green"
+                $actions.Add("Password reset (force change)")
+            } catch {
+                Write-Log "Password was reset, but failed to set change-at-logon flag: $($_.Exception.Message)" "Red"
+                $actions.Add("Password reset (change-at-logon flag FAILED)")
+                $hadError = $true
+            }
         } else {
             Write-Log "Password reset." "Green"
             $actions.Add("Password reset")
         }
-    } catch {
-        Write-Log "Failed to reset password: $($_.Exception.Message)" "Red"
     }
 } else {
     Write-Log "No new password provided — password not changed." "Yellow"
 }
 
 # Show after state
-$updated = Get-ADUser -Identity $Username -Properties `
-    DisplayName, Enabled, LockedOut, PasswordLastSet, PasswordNeverExpires, LastLogonDate, PasswordExpired
+try {
+    $updated = Get-ADUser -Identity $Username -Properties `
+        DisplayName, Enabled, LockedOut, PasswordLastSet, PasswordNeverExpires, LastLogonDate, PasswordExpired -ErrorAction Stop
 
-Write-Host ("=" * 55) -ForegroundColor DarkGray
-Write-Host "  AFTER" -ForegroundColor DarkGray
-Write-Host ("=" * 55) -ForegroundColor DarkGray
-Show-AccountStatus $updated
+    Write-Host ("=" * 55) -ForegroundColor DarkGray
+    Write-Host "  AFTER" -ForegroundColor DarkGray
+    Write-Host ("=" * 55) -ForegroundColor DarkGray
+    Show-AccountStatus $updated
+} catch {
+    Write-Log "Could not retrieve updated account state: $($_.Exception.Message)" "Yellow"
+}
 
 if ($actions.Count -gt 0) {
     Write-Log "Actions taken: $($actions -join ' | ')" "Cyan"
 } else {
     Write-Log "No changes made." "Yellow"
+}
+
+if ($hadError) {
+    Write-Log "One or more recovery steps FAILED — review the messages above." "Red"
+    exit 1
 }

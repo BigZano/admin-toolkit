@@ -32,21 +32,31 @@ try {
 
 # Check username not already taken
 try {
-    $existing = Get-ADUser -Identity $Username -ErrorAction SilentlyContinue
+    $existing = Get-ADUser -Identity $Username -ErrorAction Stop
     if ($existing) {
         Write-Log "Username '$Username' already exists in AD." "Red"; exit 1
     }
-} catch { }
+} catch [Microsoft.ActiveDirectory.Management.ADIdentityNotFoundException] {
+    # Username is free — proceed.
+} catch {
+    Write-Log "Could not verify username availability: $($_.Exception.Message)" "Red"; exit 1
+}
+
+try {
+    $domain = Get-ADDomain -ErrorAction Stop
+} catch {
+    Write-Log "Could not contact the domain: $($_.Exception.Message)" "Red"; exit 1
+}
 
 $displayName = "$FirstName $LastName"
-$upnSuffix   = (Get-ADDomain).DNSRoot
+$upnSuffix   = $domain.DNSRoot
 $upn         = "$Username@$upnSuffix"
 
 # Resolve OU — fall back to default Users container
 $ou = if (-not [string]::IsNullOrEmpty($TargetOU)) {
     $TargetOU
 } else {
-    (Get-ADDomain).UsersContainer
+    $domain.UsersContainer
 }
 
 Write-Host ""
@@ -77,7 +87,15 @@ try {
     New-ADUser @params -ErrorAction Stop
     Write-Log "Account created: $Username  ($upn)" "Green"
 } catch {
-    Write-Log "Failed to create account: $($_.Exception.Message)" "Red"; exit 1
+    Write-Log "Failed to create account: $($_.Exception.Message)" "Red"
+    # A failed New-ADUser (e.g. password complexity) can leave a partial, disabled account behind.
+    try {
+        $partial = Get-ADUser -Identity $Username -Properties Enabled -ErrorAction Stop
+        Write-Log "WARNING: a partial account '$Username' now exists (Enabled=$($partial.Enabled)). Fix or remove it before retrying." "Yellow"
+    } catch {
+        Write-Log "No partial account was left behind." "Yellow"
+    }
+    exit 1
 }
 
 # ── Copy groups from template user ────────────────────────────────────────────
@@ -88,7 +106,8 @@ if (-not [string]::IsNullOrEmpty($TemplateUser)) {
         $copied = 0
         foreach ($groupDN in $template.MemberOf) {
             try {
-                $groupName = (Get-ADGroup $groupDN).Name
+                $groupName = (Get-ADGroup $groupDN -ErrorAction Stop).Name
+                # New user is already in Domain Users via primary group — adding again would error.
                 if ($groupName -eq "Domain Users") { continue }
                 Add-ADGroupMember -Identity $groupDN -Members $Username -ErrorAction Stop
                 Write-Log "  Added to: $groupName" "Green"
@@ -104,7 +123,12 @@ if (-not [string]::IsNullOrEmpty($TemplateUser)) {
 }
 
 # ── Confirm final state ───────────────────────────────────────────────────────
-$created = Get-ADUser -Identity $Username -Properties DisplayName, Enabled, MemberOf, DistinguishedName
+try {
+    $created = Get-ADUser -Identity $Username -Properties DisplayName, Enabled, MemberOf, DistinguishedName -ErrorAction Stop
+} catch {
+    Write-Log "Account was created but final verification lookup failed: $($_.Exception.Message)" "Yellow"
+    exit 0
+}
 $groupCount = ($created.MemberOf | Measure-Object).Count
 
 Write-Host ""

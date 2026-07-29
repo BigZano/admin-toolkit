@@ -16,7 +16,6 @@ if ([string]::IsNullOrEmpty($OutputDirectory)) {
 }
 if (-not (Test-Path $OutputDirectory)) { New-Item -Path $OutputDirectory -ItemType Directory -Force | Out-Null }
 
-$pingCount = [int]$Count
 $timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
 $outputFile = Join-Path $OutputDirectory "Connectivity_$timestamp.csv"
 $logFile    = Join-Path $OutputDirectory "Connectivity_$timestamp.log"
@@ -27,9 +26,14 @@ function Write-Log {
     Write-Host $Message -ForegroundColor $Color
 }
 
+$pingCount = 0
+if (-not [int]::TryParse($Count, [ref]$pingCount) -or $pingCount -lt 1) {
+    Write-Log "Invalid Count value: '$Count' (expected an integer >= 1)" "Red"; exit 1
+}
+
 # Resolve target list
-$hostList = if (Test-Path $Targets -ErrorAction SilentlyContinue) {
-    Get-Content $Targets | Where-Object { $_ -match '\S' }
+$hostList = if (Test-Path -LiteralPath $Targets -ErrorAction SilentlyContinue) {
+    Get-Content -LiteralPath $Targets | Where-Object { $_ -match '\S' }
 } else {
     $Targets -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ }
 }
@@ -81,5 +85,9 @@ $down = @($report | Where-Object { -not $_.Reachable })
 Write-Host ""
 Write-Log "Up: $($up.Count)  |  Down/unreachable: $($down.Count)" "$(if ($down.Count -gt 0) { 'Yellow' } else { 'Green' })"
 
-$report | Export-Csv -Path $outputFile -NoTypeInformation -Encoding UTF8
-Write-Log "Report saved to: $outputFile" "Green"
+if ($report) {
+    $report | Export-Csv -Path $outputFile -NoTypeInformation -Encoding UTF8
+    Write-Log "Report saved to: $outputFile" "Green"
+} else {
+    Write-Log "No targets to test; no CSV report generated." "Yellow"
+}

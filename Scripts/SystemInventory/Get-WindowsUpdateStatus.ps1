@@ -28,8 +28,7 @@ function Write-Log {
 Write-Log "Checking Windows Update status on: $target" "Cyan"
 Write-Log "This may take a moment..." "Yellow"
 
-try {
-    $result = Invoke-Command -ComputerName $target -ErrorAction Stop -ScriptBlock {
+$collectScript = {
         # Last installed update
         $lastInstalled = Get-HotFix | Sort-Object InstalledOn -Descending | Select-Object -First 1
 
@@ -67,6 +66,13 @@ try {
             PendingReboot   = $pendingReboot
             PendingCount    = $pending.Count
         }
+}
+
+try {
+    $result = if ($target -eq $env:COMPUTERNAME) {
+        & $collectScript
+    } else {
+        Invoke-Command -ComputerName $target -ErrorAction Stop -ScriptBlock $collectScript
     }
 
     $pending = $result.PendingUpdates

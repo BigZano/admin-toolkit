@@ -42,8 +42,13 @@ try {
     Write-Log "Processing $($allGPOs.Count) GPOs..." "Cyan"
 
     $report = foreach ($gpo in $allGPOs) {
-        $xmlReport = [xml](Get-GPOReport -Guid $gpo.Id -ReportType XML)
-        $links = $xmlReport.GPO.LinksTo
+        try {
+            $xmlReport = [xml](Get-GPOReport -Guid $gpo.Id -ReportType XML -ErrorAction Stop)
+            $links = $xmlReport.GPO.LinksTo
+        } catch {
+            Write-Log "Warning: Could not read XML report for '$($gpo.DisplayName)': $($_.Exception.Message)" "Yellow"
+            continue
+        }
 
         if ($links) {
             foreach ($link in $links) {
@@ -51,8 +56,9 @@ try {
                     GPOName      = $gpo.DisplayName
                     GPOStatus    = $gpo.GpoStatus
                     LinkTarget   = $link.SOMPath
-                    LinkEnabled  = $link.Enabled
-                    LinkEnforced = $link.NoOverride
+                    # XML booleans are the strings "true"/"false" - parse to real booleans
+                    LinkEnabled  = ($link.Enabled -eq 'true')
+                    LinkEnforced = ($link.NoOverride -eq 'true')
                     ModifiedDate = $gpo.ModificationTime.ToString("yyyy-MM-dd HH:mm")
                 }
             }
@@ -68,8 +74,12 @@ try {
         }
     }
 
-    $report | Export-Csv -Path $outputFile -NoTypeInformation -Encoding UTF8
-    Write-Log "Report saved to: $outputFile" "Green"
+    if ($report) {
+        $report | Export-Csv -Path $outputFile -NoTypeInformation -Encoding UTF8
+        Write-Log "Report saved to: $outputFile" "Green"
+    } else {
+        Write-Log "No GPO link data collected - CSV not written." "Yellow"
+    }
 
     $linked   = @($report | Where-Object { $_.LinkTarget -ne "[UNLINKED]" })
     $unlinked = @($report | Where-Object { $_.LinkTarget -eq "[UNLINKED]" })

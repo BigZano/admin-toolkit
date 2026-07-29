@@ -25,27 +25,33 @@ function Write-Log {
     Write-Host $Message -ForegroundColor $Color
 }
 
+try {
+    Import-Module NetAdapter, NetTCPIP, DnsClient -ErrorAction Stop
+} catch {
+    Write-Log "Required networking modules not available: $($_.Exception.Message)" "Red"; exit 1
+}
+
 Write-Log "Retrieving network adapter info from: $target" "Cyan"
 
-try {
-    $adapters = if ($target -eq $env:COMPUTERNAME) {
-        Get-NetAdapter -ErrorAction Stop
-    } else {
-        Get-NetAdapter -CimSession $target -ErrorAction Stop
+# For remote targets, create ONE CimSession and reuse it (passing a string to
+# -CimSession would create and tear down a session on every call)
+$cimSession = $null
+if ($target -ne $env:COMPUTERNAME) {
+    try {
+        $cimSession = New-CimSession -ComputerName $target -ErrorAction Stop
+    } catch {
+        Write-Log "Cannot connect to $target : $($_.Exception.Message)" "Red"; exit 1
     }
+}
+$cimParams = if ($cimSession) { @{ CimSession = $cimSession } } else { @{} }
+
+try {
+    $adapters = Get-NetAdapter @cimParams -ErrorAction Stop
 
     $report = foreach ($adapter in ($adapters | Sort-Object Status, Name)) {
-        $ipConfig = if ($target -eq $env:COMPUTERNAME) {
-            Get-NetIPAddress -InterfaceIndex $adapter.InterfaceIndex -ErrorAction SilentlyContinue
-        } else {
-            Get-NetIPAddress -InterfaceIndex $adapter.InterfaceIndex -CimSession $target -ErrorAction SilentlyContinue
-        }
+        $ipConfig = Get-NetIPAddress -InterfaceIndex $adapter.InterfaceIndex @cimParams -ErrorAction SilentlyContinue
 
-        $dns = if ($target -eq $env:COMPUTERNAME) {
-            (Get-DnsClientServerAddress -InterfaceIndex $adapter.InterfaceIndex -ErrorAction SilentlyContinue).ServerAddresses
-        } else {
-            (Get-DnsClientServerAddress -InterfaceIndex $adapter.InterfaceIndex -CimSession $target -ErrorAction SilentlyContinue).ServerAddresses
-        }
+        $dns = (Get-DnsClientServerAddress -InterfaceIndex $adapter.InterfaceIndex @cimParams -ErrorAction SilentlyContinue).ServerAddresses
 
         $ipv4 = ($ipConfig | Where-Object { $_.AddressFamily -eq "IPv4" } | Select-Object -ExpandProperty IPAddress) -join ", "
         $ipv6 = ($ipConfig | Where-Object { $_.AddressFamily -eq "IPv6" -and $_.IPAddress -notlike "fe80*" } | Select-Object -ExpandProperty IPAddress) -join ", "
@@ -77,8 +83,14 @@ try {
         }
     }
 
-    $report | Export-Csv -Path $outputFile -NoTypeInformation -Encoding UTF8
-    Write-Host ""; Write-Log "Report saved to: $outputFile" "Green"
+    if ($report) {
+        $report | Export-Csv -Path $outputFile -NoTypeInformation -Encoding UTF8
+        Write-Host ""; Write-Log "Report saved to: $outputFile" "Green"
+    } else {
+        Write-Log "No adapters found; no CSV report generated." "Yellow"
+    }
 } catch {
     Write-Log "Error: $($_.Exception.Message)" "Red"; exit 1
+} finally {
+    if ($cimSession) { Remove-CimSession -CimSession $cimSession -ErrorAction SilentlyContinue }
 }

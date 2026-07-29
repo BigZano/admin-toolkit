@@ -96,7 +96,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		m.leftW = clamp(m.width/4, 26, 36)
 		vpW := m.width - m.leftW - 4 // right border + padding
-		vpH := m.height - 5           // top/bottom borders + footer
+		vpH := m.height - 5          // top/bottom borders + footer
 		if vpH < 1 {
 			vpH = 1
 		}
@@ -269,7 +269,6 @@ func (m model) updateParamInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.inputs[m.inputFocus], cmd = m.inputs[m.inputFocus].Update(msg)
 		return m, cmd
 	}
-	return m, nil
 }
 
 func (m model) updateConfirm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -348,7 +347,6 @@ func (m model) updateAdoptModal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.adoptInput, cmd = m.adoptInput.Update(msg)
 		return m, cmd
 	}
-	return m, nil
 }
 
 // ── Execution ────────────────────────────────────────────────────────────────
@@ -358,7 +356,7 @@ func (m *model) startExec(script *ScriptInfo, params map[string]string) tea.Cmd 
 	m.outError = ""
 	m.execCh = make(chan execOutputMsg, 64)
 	m.state = stateExecuting
-	m.vp.SetContent(runningSt.Render("Running "+displayName(script.Name)+"...\n"))
+	m.vp.SetContent(runningSt.Render("Running " + displayName(script.Name) + "...\n"))
 
 	ch := m.execCh
 	return tea.Batch(

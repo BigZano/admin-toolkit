@@ -34,33 +34,42 @@ try {
 Write-Log "Scanning user profiles on: $target" "Cyan"
 
 try {
-    $profilesKey = "\\$target\root\cimv2"
-    $profiles = if ($target -eq $env:COMPUTERNAME) {
-        Get-WmiObject -Class Win32_UserProfile -ErrorAction Stop |
-            Where-Object { -not $_.Special }
-    } else {
-        Get-WmiObject -Class Win32_UserProfile -ComputerName $target -ErrorAction Stop |
-            Where-Object { -not $_.Special }
-    }
+    $cimParams = if ($target -ne $env:COMPUTERNAME) { @{ ComputerName = $target } } else { @{} }
+
+    $profiles = Get-CimInstance -ClassName Win32_UserProfile @cimParams -ErrorAction Stop |
+        Where-Object { -not $_.Special }
 
     Write-Log "Found $($profiles.Count) non-system profiles." "Cyan"
 
-    $report = foreach ($profile in $profiles) {
-        $sid = $profile.SID
-        $localPath = $profile.LocalPath
-        $lastUse   = if ($profile.LastUseTime) {
-            [System.Management.ManagementDateTimeConverter]::ToDateTime($profile.LastUseTime).ToString("yyyy-MM-dd")
-        } else { "Unknown" }
+    # Machine SID prefix, used to classify local (non-domain) accounts before any AD lookup
+    $machineSidPrefix = $null
+    try {
+        $localAcct = Get-CimInstance -ClassName Win32_UserAccount -Filter "LocalAccount=TRUE" @cimParams -ErrorAction Stop |
+            Select-Object -First 1
+        if ($localAcct) { $machineSidPrefix = $localAcct.SID -replace '-\d+$', '' }
+    } catch {
+        Write-Log "Could not determine machine SID prefix; local accounts may be reported as Orphaned." "Yellow"
+    }
 
-        # Try to find matching AD account by SID
+    $report = foreach ($prof in $profiles) {
+        $sid       = $prof.SID
+        $localPath = $prof.LocalPath
+        # Get-CimInstance returns LastUseTime as [datetime] already (no DMTF conversion needed)
+        $lastUse   = if ($prof.LastUseTime) { $prof.LastUseTime.ToString("yyyy-MM-dd") } else { "Unknown" }
+
         $adUser = $null
-        $status = "Unknown"
-        try {
-            $adUser = Get-ADUser -Filter { SID -eq $sid } -Properties DisplayName, Enabled -ErrorAction SilentlyContinue
-            $status = if ($adUser) {
-                if ($adUser.Enabled) { "Active" } else { "Disabled" }
-            } else { "Orphaned" }
-        } catch { $status = "ADLookupFailed" }
+        if ($machineSidPrefix -and $sid -like "$machineSidPrefix-*") {
+            # Local machine account - a valid profile that will never match AD
+            $status = "LocalAccount"
+        } else {
+            $status = "Unknown"
+            try {
+                $adUser = Get-ADUser -Filter "SID -eq '$sid'" -Properties DisplayName, Enabled -ErrorAction SilentlyContinue
+                $status = if ($adUser) {
+                    if ($adUser.Enabled) { "Active" } else { "Disabled" }
+                } else { "Orphaned" }
+            } catch { $status = "ADLookupFailed" }
+        }
 
         [PSCustomObject]@{
             ProfilePath = $localPath
@@ -72,11 +81,12 @@ try {
         }
     }
 
-    $orphaned = @($report | Where-Object { $_.Status -eq "Orphaned" })
-    $disabled = @($report | Where-Object { $_.Status -eq "Disabled" })
-    $active   = @($report | Where-Object { $_.Status -eq "Active" })
+    $orphaned   = @($report | Where-Object { $_.Status -eq "Orphaned" })
+    $disabled   = @($report | Where-Object { $_.Status -eq "Disabled" })
+    $active     = @($report | Where-Object { $_.Status -eq "Active" })
+    $localAccts = @($report | Where-Object { $_.Status -eq "LocalAccount" })
 
-    Write-Log "Active: $($active.Count)  |  Disabled AD account: $($disabled.Count)  |  Orphaned (no AD match): $($orphaned.Count)" `
+    Write-Log "Active: $($active.Count)  |  Disabled AD account: $($disabled.Count)  |  Local accounts: $($localAccts.Count)  |  Orphaned (no AD match): $($orphaned.Count)" `
         "$(if ($orphaned.Count -gt 0) { 'Yellow' } else { 'Green' })"
 
     if ($orphaned.Count -gt 0 -or $disabled.Count -gt 0) {
@@ -88,8 +98,12 @@ try {
         }
     }
 
-    $report | Export-Csv -Path $outputFile -NoTypeInformation -Encoding UTF8
-    Write-Host ""; Write-Log "Report saved to: $outputFile" "Green"
+    if ($report) {
+        $report | Export-Csv -Path $outputFile -NoTypeInformation -Encoding UTF8
+        Write-Host ""; Write-Log "Report saved to: $outputFile" "Green"
+    } else {
+        Write-Log "No profiles found; no CSV report generated." "Yellow"
+    }
 } catch {
     Write-Log "Error: $($_.Exception.Message)" "Red"; exit 1
 }

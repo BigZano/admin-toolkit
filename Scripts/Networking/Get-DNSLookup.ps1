@@ -21,9 +21,11 @@ if ($type -notin $validTypes) {
     Write-Log "Invalid record type '$type'. Valid: $($validTypes -join ', ')" "Red"; exit 1
 }
 
-$dnsParams = @{ Name = $Target; ErrorAction = "Stop" }
+$dnsParams = @{ Name = $Target; ErrorAction = "Stop"; Type = $type }
 if (-not [string]::IsNullOrEmpty($DNSServer)) { $dnsParams["Server"] = $DNSServer }
-if ($type -ne "ALL") { $dnsParams["Type"] = $type }
+if ($type -eq "ALL") {
+    Write-Log "Note: ANY/ALL queries are often blocked or minimized by DNS servers; results may be incomplete." "DarkGray"
+}
 
 $serverStr = if ($DNSServer) { " via $DNSServer" } else { " (default resolver)" }
 Write-Log "DNS lookup: $Target  type=$type$serverStr" "Cyan"
@@ -46,6 +48,7 @@ try {
             "TXT"   { "  {0,-40} TXT    {1}" -f $_.Name, ($_.Strings -join " ") }
             "PTR"   { "  {0,-40} PTR    {1}" -f $_.Name, $_.NameHost }
             "SOA"   { "  {0,-40} SOA    Primary: {1}  Serial: {2}" -f $_.Name, $_.PrimaryServer, $_.SerialNumber }
+            "SRV"   { "  {0,-40} SRV    {1}:{2}  (priority: {3}, weight: {4})" -f $_.Name, $_.NameTarget, $_.Port, $_.Priority, $_.Weight }
             default { "  {0,-40} {1,-6} {2}" -f $_.Name, $_.Type, $_.QueryType }
         }
         Write-Host $line -ForegroundColor Cyan

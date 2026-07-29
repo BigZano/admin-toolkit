@@ -36,13 +36,18 @@ try {
     exit 1
 }
 
+# Validate ReportType (TUI passes free-form strings)
+$type = $ReportType.ToUpper()
+if ($type -notin @("HTML", "XML", "BOTH")) {
+    Write-Log "Invalid ReportType '$ReportType'. Valid values: HTML, XML, BOTH." "Red"
+    exit 1
+}
+
 Write-Log "Retrieving all GPOs in domain..." "Cyan"
 
 try {
     $gpos = Get-GPO -All | Sort-Object DisplayName
     Write-Log "Found $($gpos.Count) GPOs." "Cyan"
-
-    $type = $ReportType.ToUpper()
 
     if ($type -eq "HTML" -or $type -eq "BOTH") {
         $htmlReport = Join-Path $OutputDirectory "GPOReport_All_$timestamp.html"
@@ -58,19 +63,31 @@ try {
 
     # Summary CSV
     $summaryFile = Join-Path $OutputDirectory "GPOSummary_$timestamp.csv"
-    $summary = $gpos | ForEach-Object {
-        $links = (Get-GPOReport -Guid $_.Id -ReportType XML | Select-Xml -XPath "//LinksTo/SOMPath").Node.InnerText
+    $summary = foreach ($gpo in $gpos) {
+        # Property navigation is namespace-agnostic; XPath without a namespace
+        # manager would silently match nothing (GPO reports use a default namespace).
+        $links = @()
+        try {
+            $gpoXml = [xml](Get-GPOReport -Guid $gpo.Id -ReportType XML -ErrorAction Stop)
+            $links = @($gpoXml.GPO.LinksTo | Where-Object { $_ } | ForEach-Object { $_.SOMPath })
+        } catch {
+            Write-Log "Warning: Could not read XML report for '$($gpo.DisplayName)': $($_.Exception.Message)" "Yellow"
+        }
         [PSCustomObject]@{
-            Name            = $_.DisplayName
-            Status          = $_.GpoStatus
-            CreationTime    = $_.CreationTime.ToString("yyyy-MM-dd")
-            ModificationTime = $_.ModificationTime.ToString("yyyy-MM-dd HH:mm")
-            WMIFilter       = if ($_.WmiFilter) { $_.WmiFilter.Name } else { "None" }
+            Name            = $gpo.DisplayName
+            Status          = $gpo.GpoStatus
+            CreationTime    = $gpo.CreationTime.ToString("yyyy-MM-dd")
+            ModificationTime = $gpo.ModificationTime.ToString("yyyy-MM-dd HH:mm")
+            WMIFilter       = if ($gpo.WmiFilter) { $gpo.WmiFilter.Name } else { "None" }
             LinkedTo        = ($links -join "; ")
         }
     }
-    $summary | Export-Csv -Path $summaryFile -NoTypeInformation -Encoding UTF8
-    Write-Log "Summary CSV saved to: $summaryFile" "Green"
+    if ($summary) {
+        $summary | Export-Csv -Path $summaryFile -NoTypeInformation -Encoding UTF8
+        Write-Log "Summary CSV saved to: $summaryFile" "Green"
+    } else {
+        Write-Log "No GPOs found - summary CSV not written." "Yellow"
+    }
 
     Write-Host ""
     Write-Host "  GPO Summary:" -ForegroundColor DarkGray

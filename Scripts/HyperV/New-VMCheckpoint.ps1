@@ -14,6 +14,13 @@ function Write-Log {
     Write-Host "  $(Get-Date -Format 'HH:mm:ss')  $Message" -ForegroundColor $Color
 }
 
+# Hyper-V queries silently return no results without elevation, so fail loudly instead.
+$currentPrincipal = [Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
+if (-not $currentPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+    Write-Log "This script requires an elevated (Administrator) session — Hyper-V cmdlets return empty results without it." "Red"
+    exit 1
+}
+
 $snapName = if (-not [string]::IsNullOrEmpty($CheckpointName)) {
     $CheckpointName
 } else {
@@ -40,6 +47,19 @@ Write-Log "VM state: $($vm.State)" "Cyan"
 
 if ($vm.State -ne "Running" -and $vm.State -ne "Off" -and $vm.State -ne "Saved") {
     Write-Log "VM is in state '$($vm.State)' — cannot checkpoint now." "Yellow"; exit 1
+}
+
+# Checkpoint diff disks (.avhdx) grow on the volume holding the VHDs — warn if it is nearly full.
+if ([string]::IsNullOrEmpty($ComputerName)) {
+    foreach ($vhd in $vm.HardDrives) {
+        try {
+            $vol = Get-Volume -FilePath $vhd.Path -ErrorAction Stop
+            $freePct = if ($vol.Size -gt 0) { [math]::Round(($vol.SizeRemaining / $vol.Size) * 100, 1) } else { 100 }
+            if ($freePct -lt 10) {
+                Write-Log "WARNING: Volume holding '$($vhd.Path)' has only $freePct% free — checkpoint diff disks may fill it." "Yellow"
+            }
+        } catch { }
+    }
 }
 
 Write-Log "Creating checkpoint..." "Cyan"

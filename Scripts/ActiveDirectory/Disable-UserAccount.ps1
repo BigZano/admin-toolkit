@@ -52,6 +52,8 @@ if (-not [string]::IsNullOrEmpty($DisabledUsersOU)) {
         Write-Log "Account moved to: $DisabledUsersOU" "Green"
     } catch {
         Write-Log "Failed to move account to OU: $($_.Exception.Message)" "Red"
+        Write-Log "Account was disabled but NOT moved. Move it manually or re-run with a valid OU." "Yellow"
+        exit 1
     }
 }
 

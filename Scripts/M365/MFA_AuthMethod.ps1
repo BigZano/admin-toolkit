@@ -1,4 +1,4 @@
-# Generate comprehensive report of user authentication methods and MFA status
+# Report per-user Exchange authentication policy and legacy auth exposure
 
 param(
     [Parameter(Mandatory=$false)]
@@ -8,9 +8,9 @@ param(
 # Setup output directory
 if ([string]::IsNullOrEmpty($OutputDirectory)) {
     if ($IsWindows -or $env:OS -match "Windows") {
-        $OutputDirectory = Join-Path -Path $env:USERPROFILE -ChildPath "Documents\M365Reports"
+        $OutputDirectory = Join-Path -Path $env:USERPROFILE -ChildPath "Documents\AdminToolReports"
     } else {
-        $OutputDirectory = Join-Path -Path $env:HOME -ChildPath "Documents/M365Reports"
+        $OutputDirectory = Join-Path -Path $env:HOME -ChildPath "Documents/AdminToolReports"
     }
 }
 
@@ -38,6 +38,16 @@ Write-Log "  Authentication Methods Report" "Cyan"
 Write-Log "==========================================" "Cyan"
 Write-Log ""
 
+# Import required module
+try {
+    Import-Module ExchangeOnlineManagement -ErrorAction Stop
+    Write-Log "Successfully imported ExchangeOnlineManagement module" "Green"
+} catch {
+    Write-Log "FATAL: Failed to import ExchangeOnlineManagement module: $($_.Exception.Message)" "Red"
+    Write-Log "SOLUTION: Install module with: Install-Module ExchangeOnlineManagement -Scope CurrentUser" "Yellow"
+    exit 1
+}
+
 # Connect to Exchange Online with interactive authentication (supports MFA)
 Write-Log "Connecting to Exchange Online with interactive authentication..." "Yellow"
 Write-Log "Please sign in with your admin credentials when prompted (MFA supported)" "Cyan"
@@ -59,10 +69,13 @@ Write-Log "Retrieving tenant organization configuration..." "Yellow"
 try {
     $orgConfig = Get-OrganizationConfig -ErrorAction Stop
     $tenantModernAuthEnabled = $orgConfig.OAuth2ClientProfileEnabled
+    $tenantDefaultPolicyName = [string]$orgConfig.DefaultAuthenticationPolicy
     Write-Log "Tenant Modern Auth Enabled: $tenantModernAuthEnabled" "Green"
+    Write-Log "Tenant Default Auth Policy: $(if ($tenantDefaultPolicyName) { $tenantDefaultPolicyName } else { '(none)' })" "Green"
 } catch {
     Write-Log "WARNING: Failed to retrieve organization config: $($_.Exception.Message)" "Yellow"
     $tenantModernAuthEnabled = "Unknown"
+    $tenantDefaultPolicyName = ""
 }
 
 Write-Log ""
@@ -91,21 +104,10 @@ try {
     $policyExportData | Export-Csv -Path $policiesFile -NoTypeInformation -Encoding UTF8
     Write-Log "Exported policy definitions to: $policiesFile" "Green"
     
-    # Create hashtable for lookup
-    $authPolicies = $authPoliciesRaw | ForEach-Object {
-        [PSCustomObject]@{
-            Name = $_.Name
-            AllowBasicAuthPop = $_.AllowBasicAuthPop
-            AllowBasicAuthImap = $_.AllowBasicAuthImap
-            AllowBasicAuthSmtp = $_.AllowBasicAuthSmtp
-            AllowBasicAuthActiveSync = $_.AllowBasicAuthActiveSync
-            AllowBasicAuthAutodiscover = $_.AllowBasicAuthAutodiscover
-            AllowBasicAuthWebServices = $_.AllowBasicAuthWebServices
-            AllowBasicAuthPowershell = $_.AllowBasicAuthPowershell
-            AllowBasicAuthMAPI = $_.AllowBasicAuthMAPI
-        }
-    } | Group-Object -Property Name -AsHashTable -AsString
-    
+    # Create hashtable for lookup (reuse the objects built above)
+    $authPolicies = @{}
+    foreach ($p in $policyExportData) { $authPolicies[$p.Name] = $p }
+
 } catch {
     Write-Log "WARNING: Failed to retrieve authentication policies: $($_.Exception.Message)" "Yellow"
     $authPolicies = @{}
@@ -114,15 +116,13 @@ try {
 Write-Log ""
 Write-Log "Retrieving all users..." "Yellow"
 
-$tenantDefaultPolicyName = "Default"
-
 try {
     $users = Get-User -ResultSize Unlimited -ErrorAction Stop
     Write-Log "Found $($users.Count) users to process" "Green"
 } catch {
     Write-Log "FATAL: Failed to retrieve users: $($_.Exception.Message)" "Red"
     Disconnect-ExchangeOnline -Confirm:$false -ErrorAction SilentlyContinue
-    exit 2
+    exit 1
 }
 
 Write-Log ""
@@ -141,27 +141,34 @@ $userAuthPolicies = foreach ($user in $users) {
             Write-Log "  Processing user $processedCount of $($users.Count)..." "White"
         }
         
+        # Effective policy: user-assigned, else tenant default. No policy at all means
+        # legacy (basic) auth is NOT blocked by an authentication policy.
         $policyName = $user.AuthenticationPolicy
         if ([string]::IsNullOrEmpty($policyName)) {
             $policyName = $tenantDefaultPolicyName
         }
 
-        $policySettings = $authPolicies[$policyName]
+        if ([string]::IsNullOrEmpty($policyName)) {
+            $policyName = "NoPolicy-DefaultAllows"
+            $legacyAuthAllowed = $true
+        } else {
+            $policySettings = $authPolicies[$policyName]
 
-        $legacyAuthAllowed = $false
-        if ($policySettings) {
-            $legacyAuthAllowed = (
-                $policySettings.AllowBasicAuthPop -or
-                $policySettings.AllowBasicAuthImap -or
-                $policySettings.AllowBasicAuthSmtp -or
-                $policySettings.AllowBasicAuthActiveSync -or
-                $policySettings.AllowBasicAuthAutodiscover -or
-                $policySettings.AllowBasicAuthWebServices -or
-                $policySettings.AllowBasicAuthPowershell -or
-                $policySettings.AllowBasicAuthMAPI
-            )
+            $legacyAuthAllowed = $false
+            if ($policySettings) {
+                $legacyAuthAllowed = (
+                    $policySettings.AllowBasicAuthPop -or
+                    $policySettings.AllowBasicAuthImap -or
+                    $policySettings.AllowBasicAuthSmtp -or
+                    $policySettings.AllowBasicAuthActiveSync -or
+                    $policySettings.AllowBasicAuthAutodiscover -or
+                    $policySettings.AllowBasicAuthWebServices -or
+                    $policySettings.AllowBasicAuthPowershell -or
+                    $policySettings.AllowBasicAuthMAPI
+                )
+            }
         }
-        
+
         if ($legacyAuthAllowed) {
             $legacyAuthEnabledCount++
         }
@@ -190,7 +197,7 @@ try {
 } catch {
     Write-Log "FATAL: Failed to export CSV: $($_.Exception.Message)" "Red"
     Disconnect-ExchangeOnline -Confirm:$false -ErrorAction SilentlyContinue
-    exit 2
+    exit 1
 }
 
 # Disconnect from Exchange Online
@@ -223,7 +230,7 @@ Write-Log ""
 
 if ($errorCount -gt 0) {
     Write-Log "Completed with errors" "Yellow"
-    exit 2
+    exit 1
 } else {
     Write-Log "Report completed successfully!" "Green"
     exit 0

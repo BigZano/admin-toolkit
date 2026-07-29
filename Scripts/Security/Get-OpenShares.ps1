@@ -28,6 +28,12 @@ function Write-Log {
     Write-Host $Message -ForegroundColor $Color
 }
 
+try {
+    Import-Module SmbShare -ErrorAction Stop
+} catch {
+    Write-Log "SmbShare module not available: $($_.Exception.Message)" "Red"; exit 1
+}
+
 Write-Log "Auditing shares on: $target" "Cyan"
 
 try {
@@ -46,9 +52,13 @@ try {
 
     $report = foreach ($share in ($shares | Sort-Object Name)) {
         $acl = Get-SmbShareAccess -Name $share.Name @cimParams -ErrorAction SilentlyContinue
+        if (-not $acl) {
+            Write-Log "  Could not read ACL for share '$($share.Name)' (access denied? run elevated)" "Yellow"
+        }
 
-        $everyoneAccess  = $acl | Where-Object { $_.AccountName -match "Everyone" -and $_.AccessRight -ne "Deny" }
-        $authUsersAccess = $acl | Where-Object { $_.AccountName -match "Authenticated Users" -and $_.AccessRight -ne "Deny" }
+        # "Deny" is an AccessControlType value; AccessRight is Full/Change/Read/Custom
+        $everyoneAccess  = $acl | Where-Object { $_.AccountName -match "Everyone" -and $_.AccessControlType -ne "Deny" }
+        $authUsersAccess = $acl | Where-Object { $_.AccountName -match "Authenticated Users" -and $_.AccessControlType -ne "Deny" }
         $broadAccess     = $everyoneAccess -or $authUsersAccess
 
         $color = if ($broadAccess -and ($everyoneAccess.AccessRight -eq "Full" -or $authUsersAccess.AccessRight -eq "Full")) { "Red" }
@@ -59,7 +69,7 @@ try {
         Write-Host ("    Path: {0}  |  Type: {1}  |  Description: {2}" -f $share.Path, $share.ShareType, $share.Description) -ForegroundColor DarkGray
 
         foreach ($ace in $acl) {
-            $aceColor = if ($ace.AccountName -match "Everyone" -and $ace.AccessRight -ne "Deny") { "Red" }
+            $aceColor = if ($ace.AccountName -match "Everyone" -and $ace.AccessControlType -ne "Deny") { "Red" }
                         elseif ($ace.AccountName -match "Authenticated Users") { "Yellow" }
                         else { "Gray" }
             Write-Host ("    {0,-35} {1,-10} [{2}]" -f $ace.AccountName, $ace.AccessRight, $ace.AccessControlType) -ForegroundColor $aceColor
@@ -83,8 +93,12 @@ try {
     Write-Log "Shares with broad access (Everyone/Auth Users): $($broadShares.Count)" `
         "$(if ($broadShares.Count -gt 0) { 'Yellow' } else { 'Green' })"
 
-    $report | Export-Csv -Path $outputFile -NoTypeInformation -Encoding UTF8
-    Write-Log "Report saved to: $outputFile" "Green"
+    if ($report) {
+        $report | Export-Csv -Path $outputFile -NoTypeInformation -Encoding UTF8
+        Write-Log "Report saved to: $outputFile" "Green"
+    } else {
+        Write-Log "No share ACL data collected; no CSV report generated." "Yellow"
+    }
 } catch {
     Write-Log "Error: $($_.Exception.Message)" "Red"; exit 1
 }

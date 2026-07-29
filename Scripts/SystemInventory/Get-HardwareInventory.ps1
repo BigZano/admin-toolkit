@@ -31,8 +31,9 @@ function Print-Section { param([string]$Title)
 
 Write-Log "Gathering hardware inventory from: $target" "Cyan"
 
+$cimParams = @{}
 try {
-    $cimParams = if ($target -ne $env:COMPUTERNAME) { @{ CimSession = New-CimSession -ComputerName $target } } else { @{} }
+    if ($target -ne $env:COMPUTERNAME) { $cimParams = @{ CimSession = New-CimSession -ComputerName $target } }
 
     $cs      = Get-CimInstance Win32_ComputerSystem @cimParams
     $cpus    = Get-CimInstance Win32_Processor @cimParams
@@ -72,10 +73,12 @@ try {
 
     Print-Section "GPU"
     $gpus | ForEach-Object {
-        $vramMB = [math]::Round($_.AdapterRAM / 1MB, 0)
+        # Win32_VideoController.AdapterRAM is a UInt32 and caps at 4 GB — larger VRAM is under-reported.
+        $vramMB  = [math]::Round($_.AdapterRAM / 1MB, 0)
+        $vramStr = if ($_.AdapterRAM -ge 4GB - 1MB) { "$vramMB (capped — actual VRAM may be larger)" } else { "$vramMB" }
         Write-Host ("  {0}" -f $_.Name) -ForegroundColor Cyan
         Write-Host ("  VRAM: {0} MB  Driver: {1}  Resolution: {2}x{3}" -f
-            $vramMB, $_.DriverVersion, $_.CurrentHorizontalResolution, $_.CurrentVerticalResolution) -ForegroundColor Gray
+            $vramStr, $_.DriverVersion, $_.CurrentHorizontalResolution, $_.CurrentVerticalResolution) -ForegroundColor Gray
     }
 
     Print-Section "Network Adapters"
@@ -107,8 +110,8 @@ try {
 
     $record | Export-Csv -Path $outputFile -NoTypeInformation -Encoding UTF8
     Write-Host ""; Write-Log "Report saved to: $outputFile" "Green"
-
-    if ($cimParams.ContainsKey("CimSession")) { Remove-CimSession $cimParams["CimSession"] }
 } catch {
     Write-Log "Error: $($_.Exception.Message)" "Red"; exit 1
+} finally {
+    if ($cimParams.ContainsKey("CimSession")) { Remove-CimSession $cimParams["CimSession"] -ErrorAction SilentlyContinue }
 }

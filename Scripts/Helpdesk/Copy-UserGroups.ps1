@@ -44,7 +44,8 @@ Write-Host ""
 
 foreach ($groupDN in $toAdd) {
     try {
-        $groupName = (Get-ADGroup $groupDN).Name
+        $groupName = (Get-ADGroup $groupDN -ErrorAction Stop).Name
+        # Target is already in Domain Users via primary group — adding again would error.
         if ($groupName -eq "Domain Users") { $skipped++; continue }
         Add-ADGroupMember -Identity $groupDN -Members $TargetUser -ErrorAction Stop
         Write-Log "  Added:   $groupName" "Green"
@@ -59,7 +60,7 @@ if ($already.Count -gt 0) {
     Write-Host ""
     Write-Host "  Already a member of:" -ForegroundColor DarkGray
     $already | ForEach-Object {
-        $name = (Get-ADGroup $_).Name
+        $name = try { (Get-ADGroup $_ -ErrorAction Stop).Name } catch { "$_" }
         Write-Host ("  [skip]   {0}" -f $name) -ForegroundColor DarkGray
     }
 }
@@ -67,3 +68,8 @@ if ($already.Count -gt 0) {
 Write-Host ""
 Write-Log "Added: $added  |  Already member: $($already.Count)  |  Skipped: $skipped  |  Errors: $errors" `
     "$(if ($errors -gt 0) { 'Yellow' } else { 'Green' })"
+
+if ($errors -gt 0) {
+    Write-Log "$errors group(s) could not be copied — see failures above." "Red"
+    exit 1
+}

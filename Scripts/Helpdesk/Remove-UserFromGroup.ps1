@@ -19,7 +19,7 @@ try {
 }
 
 try {
-    $user  = Get-ADUser  -Identity $Username  -Properties DisplayName -ErrorAction Stop
+    $user  = Get-ADUser  -Identity $Username  -Properties DisplayName, MemberOf -ErrorAction Stop
     $group = Get-ADGroup -Identity $GroupName -Properties Description  -ErrorAction Stop
 } catch {
     Write-Log "Lookup failed: $($_.Exception.Message)" "Red"; exit 1
@@ -38,9 +38,8 @@ if ($group.Name -eq "Domain Users") {
     Write-Log "Cannot remove from 'Domain Users' — it is the primary group." "Red"; exit 1
 }
 
-# Check membership
-$isMember = Get-ADGroupMember -Identity $GroupName |
-    Where-Object { $_.SamAccountName -eq $Username }
+# Check direct membership (MemberOf check — no group enumeration needed)
+$isMember = $user.MemberOf -contains $group.DistinguishedName
 
 if (-not $isMember) {
     Write-Log "$($user.SamAccountName) is not a direct member of '$($group.Name)'." "Yellow"

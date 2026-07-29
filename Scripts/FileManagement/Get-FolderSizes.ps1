@@ -16,7 +16,6 @@ if ([string]::IsNullOrEmpty($OutputDirectory)) {
 }
 if (-not (Test-Path $OutputDirectory)) { New-Item -Path $OutputDirectory -ItemType Directory -Force | Out-Null }
 
-$depth     = [int]$Depth
 $timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
 $outputFile = Join-Path $OutputDirectory "FolderSizes_$timestamp.csv"
 $logFile    = Join-Path $OutputDirectory "FolderSizes_$timestamp.log"
@@ -27,27 +26,42 @@ function Write-Log {
     Write-Host $Message -ForegroundColor $Color
 }
 
+# NOTE: PowerShell variables are case-insensitive, so the parsed value needs a
+# name distinct from the $Depth parameter
+$parsedDepth = 0
+if (-not [int]::TryParse($Depth, [ref]$parsedDepth) -or $parsedDepth -lt 1) {
+    Write-Log "Invalid Depth value: '$Depth' (expected an integer >= 1)" "Red"; exit 1
+}
+$depth = $parsedDepth
+
+$script:SkippedItems = 0
+
 function Get-FolderSize {
     param([string]$FolderPath)
-    $size = (Get-ChildItem -Path $FolderPath -Recurse -File -ErrorAction SilentlyContinue |
+    $errs = $null
+    $size = (Get-ChildItem -LiteralPath $FolderPath -Recurse -File -ErrorAction SilentlyContinue -ErrorVariable errs |
         Measure-Object -Property Length -Sum).Sum
-    return if ($size) { $size } else { 0 }
+    $script:SkippedItems += @($errs).Count
+    if ($size) { return $size } else { return 0 }
 }
 
-if (-not (Test-Path $Path)) {
+if (-not (Test-Path -LiteralPath $Path)) {
     Write-Log "Path not found: $Path" "Red"; exit 1
 }
 
 Write-Log "Calculating folder sizes in: $Path  (depth: $depth)" "Cyan"
+Write-Log "Large directory trees may take several minutes..." "DarkGray"
 
 try {
-    $folders = Get-ChildItem -Path $Path -Directory -Depth ($depth - 1) -ErrorAction SilentlyContinue |
+    $folders = Get-ChildItem -LiteralPath $Path -Directory -Depth ($depth - 1) -ErrorAction SilentlyContinue |
         Sort-Object FullName
 
     Write-Log "Processing $($folders.Count) folders..." "Cyan"
 
+    $sizeByPath = @{}
     $report = $folders | ForEach-Object {
         $sizeBytes = Get-FolderSize -FolderPath $_.FullName
+        $sizeByPath[$_.FullName] = $sizeBytes
         [PSCustomObject]@{
             SizeGB       = [math]::Round($sizeBytes / 1GB, 3)
             SizeMB       = [math]::Round($sizeBytes / 1MB, 1)
@@ -57,8 +71,17 @@ try {
         }
     } | Sort-Object SizeGB -Descending
 
-    # Root size
-    $rootSize = Get-FolderSize -FolderPath $Path
+    # Root total = sum of top-level subfolder sizes + files directly in the root.
+    # (Avoids re-walking the entire tree a second time.)
+    $rootItem = Get-Item -LiteralPath $Path
+    $rootFilesSum = (Get-ChildItem -LiteralPath $Path -File -ErrorAction SilentlyContinue |
+        Measure-Object -Property Length -Sum).Sum
+    if (-not $rootFilesSum) { $rootFilesSum = 0 }
+    $childSum = ($folders | Where-Object { $_.Parent.FullName -eq $rootItem.FullName } |
+        ForEach-Object { $sizeByPath[$_.FullName] } | Measure-Object -Sum).Sum
+    if (-not $childSum) { $childSum = 0 }
+    $rootSize = $childSum + $rootFilesSum
+
     Write-Host ""
     Write-Host ("  Root total: {0:N2} GB  ({1})" -f ($rootSize / 1GB), $Path) -ForegroundColor Cyan
     Write-Host ""
@@ -69,8 +92,14 @@ try {
         Write-Host ("  {0,8:N2} GB  {1,-35} {2}" -f $_.SizeGB, $_.FolderName, $bar) -ForegroundColor $color
     }
 
-    $report | Export-Csv -Path $outputFile -NoTypeInformation -Encoding UTF8
-    Write-Host ""; Write-Log "Report saved to: $outputFile" "Green"
+    if ($script:SkippedItems -gt 0) { Write-Log "Skipped $($script:SkippedItems) inaccessible item(s)" "Yellow" }
+
+    if ($report) {
+        $report | Export-Csv -Path $outputFile -NoTypeInformation -Encoding UTF8
+        Write-Host ""; Write-Log "Report saved to: $outputFile" "Green"
+    } else {
+        Write-Log "No subfolders found; no CSV report generated." "Gray"
+    }
 } catch {
     Write-Log "Error: $($_.Exception.Message)" "Red"; exit 1
 }

@@ -25,10 +25,19 @@ function Write-Log {
     Write-Host $Message -ForegroundColor $Color
 }
 
+try {
+    Import-Module SmbShare -ErrorAction Stop
+} catch {
+    Write-Log "SmbShare module not available: $($_.Exception.Message)" "Red"
+    Write-Log "This tool requires Windows with SMB support." "Yellow"
+    exit 1
+}
+
 Write-Log "Retrieving open files on: $target" "Cyan"
 
 try {
-    $openFiles = Get-SmbOpenFile -ErrorAction Stop |
+    $cimParams = if ($target -ne $env:COMPUTERNAME) { @{ CimSession = $target } } else { @{} }
+    $openFiles = Get-SmbOpenFile @cimParams -ErrorAction Stop |
         Where-Object { -not [string]::IsNullOrEmpty($_.Path) } |
         Sort-Object Path |
         ForEach-Object {

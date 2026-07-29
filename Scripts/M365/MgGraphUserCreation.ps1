@@ -12,7 +12,7 @@ param(
     [Parameter(Mandatory=$false)]
     [string]$LicenseSKU = "",
     [Parameter(Mandatory=$false)]
-    [int]$LicenseIndex = -1,
+    [string]$LicenseIndex = "",
     [Parameter(Mandatory=$false)]
     [switch]$ListLicenses,
     [Parameter(Mandatory=$false)]
@@ -22,9 +22,9 @@ param(
 # Set output directory (OS agnostic)
 if ([string]::IsNullOrEmpty($OutputDirectory)) {
     if ($IsWindows -or $env:OS -match "Windows") {
-        $OutputDirectory = Join-Path -Path $env:USERPROFILE -ChildPath "Documents\M365Reports"
+        $OutputDirectory = Join-Path -Path $env:USERPROFILE -ChildPath "Documents\AdminToolReports"
     } else {
-        $OutputDirectory = Join-Path -Path $env:HOME -ChildPath "Documents/M365Reports"
+        $OutputDirectory = Join-Path -Path $env:HOME -ChildPath "Documents/AdminToolReports"
     }
 }
 
@@ -51,11 +51,24 @@ Write-Log "       Microsoft 365 User Creation" "Cyan"
 Write-Log "==========================================" "Cyan"
 Write-Log ""
 
+# Cast LicenseIndex internally (TUI passes all params as strings)
+$licenseIndexValue = -1
+if (-not [string]::IsNullOrWhiteSpace($LicenseIndex)) {
+    $parsedIndex = 0
+    if ([int]::TryParse($LicenseIndex, [ref]$parsedIndex)) {
+        $licenseIndexValue = $parsedIndex
+    } else {
+        Write-Log "FATAL: LicenseIndex '$LicenseIndex' is not a valid number." "Red"
+        Write-Log "SOLUTION: Provide a numeric index from -ListLicenses output." "Yellow"
+        exit 1
+    }
+}
+
 # Validate license selection exclusivity
-if (-not $ListLicenses -and $LicenseSKU -ne "" -and $LicenseIndex -ge 0) {
+if (-not $ListLicenses -and $LicenseSKU -ne "" -and $licenseIndexValue -ge 0) {
     Write-Log "FATAL: Specify either LicenseSKU OR LicenseIndex, not both." "Red"
     Write-Log "SOLUTION: Use -LicenseSKU <SkuPartNumber> OR -LicenseIndex <Number> after listing." "Yellow"
-    exit 2
+    exit 1
 }
 
 # If not listing licenses, ensure required user creation params are present
@@ -68,7 +81,7 @@ if (-not $ListLicenses) {
     if ($missing.Count -gt 0) {
         Write-Log "FATAL: Missing required parameters: $($missing -join ', ')" "Red"
         Write-Log "SOLUTION: Provide all mandatory fields for user creation or use -ListLicenses mode." "Yellow"
-        exit 2
+        exit 1
     }
 }
 
@@ -76,7 +89,7 @@ if (-not $ListLicenses) {
 if (-not $ListLicenses -and $UsageLocation.Length -ne 2) {
     Write-Log "FATAL: UsageLocation must be a 2-letter ISO country code (e.g., 'US', 'GB', 'CA')" "Red"
     Write-Log "SOLUTION: Provide a valid ISO 3166-1 alpha-2 country code" "Yellow"
-    exit 2
+    exit 1
 }
 if (-not $ListLicenses) { $UsageLocation = $UsageLocation.ToUpper() }
 
@@ -96,6 +109,8 @@ Write-Log "Connecting to Microsoft Graph with interactive authentication..." "Ye
 try {
     Import-Module Microsoft.Graph.Authentication -ErrorAction Stop
     Import-Module Microsoft.Graph.Users -ErrorAction Stop
+    Import-Module Microsoft.Graph.Users.Actions -ErrorAction Stop
+    Import-Module Microsoft.Graph.Identity.DirectoryManagement -ErrorAction Stop
 } catch {
     Write-Log "FATAL: Failed to import Microsoft Graph modules: $($_.Exception.Message)" "Red"
     Write-Log "SOLUTION: Install modules with: Install-Module Microsoft.Graph -Scope CurrentUser" "Yellow"
@@ -125,19 +140,23 @@ if (-not $ListLicenses) {
     Write-Log ""
 }
 
-# Check if user already exists
-Write-Log "Checking if user already exists..." "Yellow"
-try {
-    $existingUser = Get-MgUser -Filter "userPrincipalName eq '$UserPrincipalName'" -ErrorAction SilentlyContinue
-    if ($existingUser) {
-        Write-Log "FATAL: User '$UserPrincipalName' already exists!" "Red"
-        Write-Log "SOLUTION: Use a different UserPrincipalName or delete the existing user first" "Yellow"
-        Disconnect-MgGraph | Out-Null
-        exit 2
+# Check if user already exists (skip in license listing mode)
+if (-not $ListLicenses) {
+    Write-Log "Checking if user already exists..." "Yellow"
+    try {
+        # Escape single quotes for the OData filter
+        $upnFilterValue = $UserPrincipalName -replace "'", "''"
+        $existingUser = Get-MgUser -Filter "userPrincipalName eq '$upnFilterValue'" -ErrorAction SilentlyContinue
+        if ($existingUser) {
+            Write-Log "FATAL: User '$UserPrincipalName' already exists!" "Red"
+            Write-Log "SOLUTION: Use a different UserPrincipalName or delete the existing user first" "Yellow"
+            Disconnect-MgGraph | Out-Null
+            exit 1
+        }
+        Write-Log "User does not exist - proceeding with creation" "Green"
+    } catch {
+        Write-Log "WARNING: Could not verify user existence: $($_.Exception.Message)" "Yellow"
     }
-    Write-Log "User does not exist - proceeding with creation" "Green"
-} catch {
-    Write-Log "WARNING: Could not verify user existence: $($_.Exception.Message)" "Yellow"
 }
 
 # Get available licenses
@@ -192,9 +211,9 @@ try {
                 Write-Log "License '$LicenseSKU' selected (Available: $availableCount)" "Green"
             }
         }
-    } elseif (-not $ListLicenses -and $LicenseIndex -ge 0) {
-        if ($LicenseIndex -ge 1 -and $LicenseIndex -le $availableLicenses.Count) {
-            $selectedLicense = $availableLicenses[$LicenseIndex - 1]
+    } elseif (-not $ListLicenses -and $licenseIndexValue -ge 0) {
+        if ($licenseIndexValue -ge 1 -and $licenseIndexValue -le $availableLicenses.Count) {
+            $selectedLicense = $availableLicenses[$licenseIndexValue - 1]
             $avail = $selectedLicense.PrepaidUnits.Enabled - $selectedLicense.ConsumedUnits
             if ($avail -le 0) {
                 Write-Log "WARNING: Selected license index $LicenseIndex has no availability" "Yellow"
@@ -208,6 +227,11 @@ try {
     }
 } catch {
     Write-Log "WARNING: Failed to retrieve licenses: $($_.Exception.Message)" "Yellow"
+    if ($ListLicenses) {
+        Write-Log "FATAL: Cannot list licenses - aborting." "Red"
+        Disconnect-MgGraph | Out-Null
+        exit 1
+    }
 }
 
 # Create the user
@@ -253,7 +277,7 @@ try {
     }
     
     Disconnect-MgGraph | Out-Null
-    exit 2
+    exit 1
 } finally {
     # Securely clear password from memory
     if ($BSTR -ne [IntPtr]::Zero) {

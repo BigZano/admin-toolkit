@@ -31,9 +31,17 @@ try {
 Write-Log "Collecting AD replication metadata..." "Cyan"
 
 try {
+    # -Scope Domain expects a domain DNS name as Target; a specific DC needs -Scope Server.
+    # Target is effectively required — omitting it makes the cmdlet prompt (fatal under -NonInteractive).
     $replParams = @{ ErrorAction = "Stop" }
-    if (-not [string]::IsNullOrEmpty($TargetDC)) { $replParams["Target"] = $TargetDC }
-    $replStatus = Get-ADReplicationPartnerMetadata @replParams -Scope Domain
+    if (-not [string]::IsNullOrEmpty($TargetDC)) {
+        $replParams["Target"] = $TargetDC
+        $replParams["Scope"]  = "Server"
+    } else {
+        $replParams["Target"] = (Get-ADDomain -ErrorAction Stop).DNSRoot
+        $replParams["Scope"]  = "Domain"
+    }
+    $replStatus = Get-ADReplicationPartnerMetadata @replParams
 } catch {
     Write-Log "Failed to retrieve replication data: $($_.Exception.Message)" "Red"; exit 1
 }
@@ -72,9 +80,13 @@ Write-Log ("Links checked: $($report.Count)  |  Errors: $errors  |  Consecutive 
 # Also run repadmin summary if available
 try {
     Write-Host ""
-    Write-Log "Running repadmin /replsummary..." "Cyan"
-    $summary = & repadmin /replsummary 2>&1
-    $summary | ForEach-Object { Write-Host "  $_" -ForegroundColor Gray }
+    if (Get-Command repadmin -ErrorAction SilentlyContinue) {
+        Write-Log "Running repadmin /replsummary..." "Cyan"
+        $summary = & repadmin /replsummary 2>&1
+        $summary | ForEach-Object { Write-Host "  $_" -ForegroundColor Gray }
+    } else {
+        Write-Log "repadmin not available (RSAT AD DS tools not installed) — skipping /replsummary." "Yellow"
+    }
 } catch { }
 
 $report | Export-Csv -Path $outputFile -NoTypeInformation -Encoding UTF8

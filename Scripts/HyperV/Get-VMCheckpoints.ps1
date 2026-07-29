@@ -24,8 +24,17 @@ function Write-Log {
     Write-Host $Message -ForegroundColor $Color
 }
 
+# Hyper-V queries silently return no results without elevation, so fail loudly instead.
+$currentPrincipal = [Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
+if (-not $currentPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+    Write-Log "This script requires an elevated (Administrator) session — Hyper-V cmdlets return empty results without it." "Red"
+    exit 1
+}
+
+# Get-VMSnapshot's -VMName is mandatory; default to "*" so a blank VMName means "all VMs"
+# instead of an interactive prompt (fatal under -NonInteractive).
 $getParams = @{ ErrorAction = "Stop" }
-if (-not [string]::IsNullOrEmpty($VMName))       { $getParams["VMName"]       = $VMName }
+$getParams["VMName"] = if (-not [string]::IsNullOrEmpty($VMName)) { $VMName } else { "*" }
 if (-not [string]::IsNullOrEmpty($ComputerName)) { $getParams["ComputerName"] = $ComputerName }
 
 try {
@@ -40,8 +49,8 @@ if (-not $snapshots -or @($snapshots).Count -eq 0) {
 
 Write-Log "Found $(@($snapshots).Count) checkpoint(s)" "Cyan"
 Write-Host ""
-Write-Host ("  {0,-28} {1,-24} {2,-18} {3}" -f "VM Name", "Checkpoint", "Created", "Age") -ForegroundColor DarkGray
-Write-Host ("  " + ("-" * 85)) -ForegroundColor DarkGray
+Write-Host ("  {0,-28} {1,-24} {2,-18} {3,-10} {4}" -f "VM Name", "Checkpoint", "Created", "Age", "Size") -ForegroundColor DarkGray
+Write-Host ("  " + ("-" * 95)) -ForegroundColor DarkGray
 
 $now    = Get-Date
 $report = foreach ($s in $snapshots | Sort-Object VMName, CreationTime) {
@@ -49,17 +58,29 @@ $report = foreach ($s in $snapshots | Sort-Object VMName, CreationTime) {
     $ageStr  = if ($ageDays -lt 1) { "< 1 day" } elseif ($ageDays -lt 2) { "1 day" } else { "$ageDays days" }
     $color   = if ($ageDays -gt 30) { "Yellow" } elseif ($ageDays -gt 7) { "White" } else { "Green" }
 
-    Write-Host ("  {0,-28} {1,-24} {2,-18} {3}" -f `
+    # On-disk size of the checkpoint's differencing disks (local host only).
+    $sizeMB = $null
+    if ([string]::IsNullOrEmpty($ComputerName) -and $s.HardDrives) {
+        try {
+            $bytes = ($s.HardDrives.Path | Where-Object { $_ -and (Test-Path $_) } |
+                Get-Item -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum).Sum
+            if ($bytes) { $sizeMB = [math]::Round($bytes / 1MB, 0) }
+        } catch { }
+    }
+    $sizeStr = if ($null -ne $sizeMB) { "$sizeMB MB" } else { "-" }
+
+    Write-Host ("  {0,-28} {1,-24} {2,-18} {3,-10} {4}" -f `
         $s.VMName,
         ($s.Name.Substring(0, [Math]::Min(22, $s.Name.Length))),
         $s.CreationTime.ToString("yyyy-MM-dd HH:mm"),
-        $ageStr) -ForegroundColor $color
+        $ageStr, $sizeStr) -ForegroundColor $color
 
     [PSCustomObject]@{
         VMName          = $s.VMName
         CheckpointName  = $s.Name
         Created         = $s.CreationTime
         AgeDays         = $ageDays
+        SizeMB          = $sizeMB
         SnapshotType    = $s.SnapshotType
         ParentCheckpoint = $s.ParentSnapshotName
     }

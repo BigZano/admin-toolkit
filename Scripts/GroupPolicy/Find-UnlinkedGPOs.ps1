@@ -43,28 +43,33 @@ try {
 
     $unlinked = $allGPOs | ForEach-Object {
         $gpo = $_
-        $xmlReport = [xml](Get-GPOReport -Guid $gpo.Id -ReportType XML)
-        $links = $xmlReport.GPO.LinksTo
+        try {
+            $xmlReport = [xml](Get-GPOReport -Guid $gpo.Id -ReportType XML -ErrorAction Stop)
+            $links = $xmlReport.GPO.LinksTo
 
-        if (-not $links) {
-            [PSCustomObject]@{
-                Name             = $gpo.DisplayName
-                Status           = $gpo.GpoStatus
-                CreationTime     = $gpo.CreationTime.ToString("yyyy-MM-dd")
-                ModificationTime = $gpo.ModificationTime.ToString("yyyy-MM-dd HH:mm")
-                GUID             = $gpo.Id
+            if (-not $links) {
+                [PSCustomObject]@{
+                    Name             = $gpo.DisplayName
+                    Status           = $gpo.GpoStatus
+                    CreationTime     = $gpo.CreationTime.ToString("yyyy-MM-dd")
+                    ModificationTime = $gpo.ModificationTime.ToString("yyyy-MM-dd HH:mm")
+                    GUID             = $gpo.Id
+                }
             }
+        } catch {
+            Write-Log "Warning: Could not read XML report for '$($gpo.DisplayName)': $($_.Exception.Message)" "Yellow"
         }
     } | Where-Object { $_ -ne $null } | Sort-Object Name
 
     Write-Log "Unlinked GPOs: $($unlinked.Count) of $($allGPOs.Count)" "$(if ($unlinked.Count -gt 0) { 'Yellow' } else { 'Green' })"
+    Write-Log "NOTE: GPO XML reports do not include AD *site* links. A GPO linked only to a site will appear here as unlinked - verify in GPMC before deleting." "Yellow"
 
     if ($unlinked.Count -gt 0) {
         $unlinked | Export-Csv -Path $outputFile -NoTypeInformation -Encoding UTF8
         Write-Log "Report saved to: $outputFile" "Green"
 
         Write-Host ""
-        Write-Host "  Unlinked GPOs (candidates for cleanup):" -ForegroundColor Yellow
+        Write-Host "  Unlinked GPOs (candidates for cleanup - verify site links first):" -ForegroundColor Yellow
         $unlinked | ForEach-Object {
             Write-Host ("  {0,-50} Status: {1}" -f $_.Name, $_.Status) -ForegroundColor Yellow
             Write-Host ("  {0,-50} Modified: {1}" -f "", $_.ModificationTime) -ForegroundColor DarkGray

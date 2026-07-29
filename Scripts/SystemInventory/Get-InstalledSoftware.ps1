@@ -27,38 +27,44 @@ function Write-Log {
     Write-Host $Message -ForegroundColor $Color
 }
 
-$regPaths = @(
-    "SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall",
-    "SOFTWARE\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall"
-)
+$collectScript = {
+    $hives = @(
+        @{ Root = [Microsoft.Win32.Registry]::LocalMachine; Path = "SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall";             Arch = "64-bit" }
+        @{ Root = [Microsoft.Win32.Registry]::LocalMachine; Path = "SOFTWARE\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall"; Arch = "32-bit" }
+        @{ Root = [Microsoft.Win32.Registry]::CurrentUser;  Path = "SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall";             Arch = "Per-user" }
+    )
+    foreach ($h in $hives) {
+        try {
+            $key = $h.Root.OpenSubKey($h.Path)
+            if (-not $key) { continue }
+            foreach ($subKeyName in $key.GetSubKeyNames()) {
+                $sub = $key.OpenSubKey($subKeyName)
+                if (-not $sub) { continue }
+                $name = $sub.GetValue("DisplayName")
+                if ([string]::IsNullOrWhiteSpace($name)) { continue }
+                [PSCustomObject]@{
+                    Name         = $name
+                    Version      = $sub.GetValue("DisplayVersion")
+                    Publisher    = $sub.GetValue("Publisher")
+                    InstallDate  = $sub.GetValue("InstallDate")
+                    InstallLocation = $sub.GetValue("InstallLocation")
+                    Architecture = $h.Arch
+                }
+            }
+        } catch {
+            Write-Warning "Failed to read registry path '$($h.Path)': $($_.Exception.Message)"
+        }
+    }
+}
 
 Write-Log "Scanning installed software on: $target" "Cyan"
 
 try {
-    $software = Invoke-Command -ComputerName $target -ErrorAction Stop -ScriptBlock {
-        param($paths)
-        $results = foreach ($path in $paths) {
-            try {
-                $reg = [Microsoft.Win32.RegistryKey]::OpenRemoteBaseKey("LocalMachine", $env:COMPUTERNAME)
-                $key = $reg.OpenSubKey($path)
-                if (-not $key) { continue }
-                foreach ($subKeyName in $key.GetSubKeyNames()) {
-                    $sub = $key.OpenSubKey($subKeyName)
-                    $name = $sub.GetValue("DisplayName")
-                    if ([string]::IsNullOrWhiteSpace($name)) { continue }
-                    [PSCustomObject]@{
-                        Name         = $name
-                        Version      = $sub.GetValue("DisplayVersion")
-                        Publisher    = $sub.GetValue("Publisher")
-                        InstallDate  = $sub.GetValue("InstallDate")
-                        InstallLocation = $sub.GetValue("InstallLocation")
-                        Architecture = if ($path -match "Wow6432") { "32-bit" } else { "64-bit" }
-                    }
-                }
-            } catch { }
-        }
-        $results
-    } -ArgumentList (,$regPaths)
+    $software = if ($target -eq $env:COMPUTERNAME) {
+        & $collectScript
+    } else {
+        Invoke-Command -ComputerName $target -ErrorAction Stop -ScriptBlock $collectScript
+    }
 
     # Deduplicate by name+version
     $software = $software | Sort-Object Name, Version | Group-Object Name, Version |

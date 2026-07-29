@@ -71,21 +71,27 @@ if (-not $user.Enabled) {
 Write-Host "  [2/5] Removing group memberships..." -ForegroundColor Cyan
 $groups = $user.MemberOf
 $removedGroups = [System.Collections.Generic.List[string]]::new()
+$groupFailures = 0
 
 foreach ($groupDN in $groups) {
     try {
-        $groupName = (Get-ADGroup $groupDN).Name
-        # Never remove from Domain Users — it's the primary group and can't be removed this way
+        $groupName = (Get-ADGroup $groupDN -ErrorAction Stop).Name
+        # The primary group (normally Domain Users) is not in MemberOf, but guard in case
+        # Domain Users is a non-primary membership — removal during offboard is not desired here.
         if ($groupName -eq "Domain Users") { continue }
         Remove-ADGroupMember -Identity $groupDN -Members $Username -Confirm:$false -ErrorAction Stop
         Write-Log "  Removed from: $groupName" "Green" "OK"
         $removedGroups.Add($groupName)
     } catch {
         Write-Log "  Failed to remove from $groupDN : $($_.Exception.Message)" "Yellow" "WARN"
+        $groupFailures++
     }
 }
-Write-Log "Removed from $($removedGroups.Count) group(s)." "Green" "OK"
+Write-Log "Removed from $($removedGroups.Count) group(s); $groupFailures failure(s)." "$(if ($groupFailures -gt 0) { 'Yellow' } else { 'Green' })" "OK"
 $completed.Add("Removed from $($removedGroups.Count) groups")
+if ($groupFailures -gt 0) {
+    $failed.Add("Group removal: $groupFailures group(s) could not be removed")
+}
 
 # ── 3. Set Out of Office (Exchange Online) ───────────────────────────────────
 Write-Host "  [3/5] Setting Out of Office reply..." -ForegroundColor Cyan
@@ -166,3 +172,8 @@ $record = [PSCustomObject]@{
 }
 $csvFile = Join-Path $OutputDirectory "Offboard_${Username}_$timestamp.csv"
 $record | Export-Csv -Path $csvFile -NoTypeInformation -Encoding UTF8
+
+if ($failed.Count -gt 0) {
+    Write-Log "Offboarding finished with $($failed.Count) failed step(s)." "Red" "ERROR"
+    exit 1
+}

@@ -25,9 +25,22 @@ function Write-Log {
     Write-Host $Message -ForegroundColor $Color
 }
 
+if ($target -eq $env:COMPUTERNAME) {
+    try {
+        # In pwsh 7 the BitLocker module loads via the Windows PowerShell compatibility shim
+        Import-Module BitLocker -ErrorAction Stop -WarningAction SilentlyContinue
+    } catch {
+        Write-Log "BitLocker module not available: $($_.Exception.Message)" "Red"
+        Write-Log "BitLocker requires a supported Windows edition and Windows PowerShell 5.1 present for compatibility loading." "Yellow"
+        exit 1
+    }
+}
+
 Write-Log "Checking BitLocker status on: $target" "Cyan"
 
 try {
+    # NOTE: via the compat shim / remoting, enum properties (ProtectionStatus, VolumeStatus,
+    # KeyProtectorType) are deserialized to strings - the string comparisons below are intentional.
     $volumes = if ($target -ne $env:COMPUTERNAME) {
         Invoke-Command -ComputerName $target -ScriptBlock { Get-BitLockerVolume -ErrorAction Stop } -ErrorAction Stop
     } else {
@@ -79,8 +92,12 @@ try {
     Write-Log "Volumes: $($report.Count)  |  Unprotected/incomplete: $($unprotected.Count)" `
         "$(if ($unprotected.Count -gt 0) { 'Red' } else { 'Green' })"
 
-    $report | Export-Csv -Path $outputFile -NoTypeInformation -Encoding UTF8
-    Write-Host ""; Write-Log "Report saved to: $outputFile" "Green"
+    if ($report) {
+        $report | Export-Csv -Path $outputFile -NoTypeInformation -Encoding UTF8
+        Write-Host ""; Write-Log "Report saved to: $outputFile" "Green"
+    } else {
+        Write-Log "No volumes reported; no CSV report generated." "Yellow"
+    }
 } catch {
     Write-Log "Error: $($_.Exception.Message)" "Red"
     Write-Log "Ensure BitLocker Drive Encryption is available and you are running as Administrator." "Yellow"

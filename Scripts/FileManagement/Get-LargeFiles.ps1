@@ -16,7 +16,6 @@ if ([string]::IsNullOrEmpty($OutputDirectory)) {
 }
 if (-not (Test-Path $OutputDirectory)) { New-Item -Path $OutputDirectory -ItemType Directory -Force | Out-Null }
 
-$minBytes  = [double]$MinSizeMB * 1MB
 $timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
 $outputFile = Join-Path $OutputDirectory "LargeFiles_$timestamp.csv"
 $logFile    = Join-Path $OutputDirectory "LargeFiles_$timestamp.log"
@@ -27,14 +26,21 @@ function Write-Log {
     Write-Host $Message -ForegroundColor $Color
 }
 
-if (-not (Test-Path $Path)) {
+$minSize = 0.0
+if (-not [double]::TryParse($MinSizeMB, [ref]$minSize) -or $minSize -lt 0) {
+    Write-Log "Invalid MinSizeMB value: '$MinSizeMB' (expected a non-negative number)" "Red"; exit 1
+}
+$minBytes = $minSize * 1MB
+
+if (-not (Test-Path -LiteralPath $Path)) {
     Write-Log "Path not found: $Path" "Red"; exit 1
 }
 
 Write-Log "Scanning: $Path  (min size: ${MinSizeMB} MB)" "Cyan"
+Write-Log "Large directory trees may take several minutes..." "DarkGray"
 
 try {
-    $files = Get-ChildItem -Path $Path -Recurse -File -ErrorAction SilentlyContinue |
+    $files = Get-ChildItem -LiteralPath $Path -Recurse -File -ErrorAction SilentlyContinue -ErrorVariable scanErrors |
         Where-Object { $_.Length -ge $minBytes } |
         Sort-Object Length -Descending |
         ForEach-Object {
@@ -48,6 +54,7 @@ try {
             }
         }
 
+    if ($scanErrors.Count -gt 0) { Write-Log "Skipped $($scanErrors.Count) inaccessible item(s)" "Yellow" }
     Write-Log "Found $($files.Count) files >= ${MinSizeMB} MB" "$(if ($files.Count -gt 0) { 'Yellow' } else { 'Green' })"
 
     if ($files.Count -gt 0) {
@@ -62,6 +69,8 @@ try {
 
         $files | Export-Csv -Path $outputFile -NoTypeInformation -Encoding UTF8
         Write-Host ""; Write-Log "Report saved to: $outputFile" "Green"
+    } else {
+        Write-Log "No files met the threshold; no CSV report generated." "Gray"
     }
 } catch {
     Write-Log "Error: $($_.Exception.Message)" "Red"; exit 1

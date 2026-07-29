@@ -26,7 +26,7 @@ function Write-Log {
     Write-Host $Message -ForegroundColor $Color
 }
 
-if (-not (Test-Path $Path)) {
+if (-not (Test-Path -LiteralPath $Path)) {
     Write-Log "Path not found: $Path" "Red"; exit 1
 }
 
@@ -35,16 +35,18 @@ Write-Log "Auditing permissions: $Path$(if ($isRecurse) { ' (recursive)' })" "Cy
 
 try {
     $folders = if ($isRecurse) {
-        @(Get-Item $Path) + @(Get-ChildItem -Path $Path -Directory -Recurse -ErrorAction SilentlyContinue)
+        @(Get-Item -LiteralPath $Path) + @(Get-ChildItem -LiteralPath $Path -Directory -Recurse -ErrorAction SilentlyContinue -ErrorVariable enumErrors)
     } else {
-        @(Get-Item $Path)
+        @(Get-Item -LiteralPath $Path)
     }
+    if ($enumErrors.Count -gt 0) { Write-Log "Skipped $($enumErrors.Count) inaccessible item(s) during enumeration" "Yellow" }
 
     Write-Log "Processing $($folders.Count) folder(s)..." "Cyan"
 
+    $aclSkipped = 0
     $report = foreach ($folder in $folders) {
-        $acl = Get-Acl -Path $folder.FullName -ErrorAction SilentlyContinue
-        if (-not $acl) { continue }
+        $acl = Get-Acl -LiteralPath $folder.FullName -ErrorAction SilentlyContinue
+        if (-not $acl) { $aclSkipped++; continue }
 
         $inherited = $acl.AreAccessRulesProtected -eq $false
 
@@ -62,6 +64,8 @@ try {
         }
     }
 
+    if ($aclSkipped -gt 0) { Write-Log "Could not read ACLs on $aclSkipped folder(s) (access denied)" "Yellow" }
+
     # Flag explicit (non-inherited) permissions
     $explicit = @($report | Where-Object { -not $_.IsInherited })
     Write-Log "Total ACEs: $($report.Count)  |  Explicit (non-inherited): $($explicit.Count)" "$(if ($explicit.Count -gt 0) { 'Yellow' } else { 'Green' })"
@@ -75,8 +79,12 @@ try {
         }
     }
 
-    $report | Export-Csv -Path $outputFile -NoTypeInformation -Encoding UTF8
-    Write-Host ""; Write-Log "Report saved to: $outputFile" "Green"
+    if ($report) {
+        $report | Export-Csv -Path $outputFile -NoTypeInformation -Encoding UTF8
+        Write-Host ""; Write-Log "Report saved to: $outputFile" "Green"
+    } else {
+        Write-Log "No ACEs collected; no CSV report generated." "Yellow"
+    }
 } catch {
     Write-Log "Error: $($_.Exception.Message)" "Red"; exit 1
 }

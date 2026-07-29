@@ -42,7 +42,12 @@ try {
     Write-Log "Processing $($allGPOs.Count) GPOs..." "Cyan"
 
     $report = foreach ($gpo in $allGPOs) {
-        $permissions = Get-GPPermission -Guid $gpo.Id -All -ErrorAction SilentlyContinue
+        $permissions = @()
+        try {
+            $permissions = Get-GPPermission -Guid $gpo.Id -All -ErrorAction Stop
+        } catch {
+            Write-Log "Warning: Could not read permissions for '$($gpo.DisplayName)': $($_.Exception.Message)" "Yellow"
+        }
         foreach ($perm in $permissions) {
             [PSCustomObject]@{
                 GPOName     = $gpo.DisplayName
@@ -54,8 +59,12 @@ try {
         }
     }
 
-    $report | Export-Csv -Path $outputFile -NoTypeInformation -Encoding UTF8
-    Write-Log "Full permissions report saved to: $outputFile" "Green"
+    if ($report) {
+        $report | Export-Csv -Path $outputFile -NoTypeInformation -Encoding UTF8
+        Write-Log "Full permissions report saved to: $outputFile" "Green"
+    } else {
+        Write-Log "No permission entries collected - CSV not written." "Yellow"
+    }
 
     # Highlight non-standard edit rights
     $editRights = @($report | Where-Object {
@@ -73,13 +82,14 @@ try {
         Write-Log "No non-standard edit permissions found." "Green"
     }
 
-    # Summary by GPO
+    # Summary by GPO (pre-group once instead of re-filtering per GPO)
     Write-Host ""
     Write-Host "  Permission summary per GPO:" -ForegroundColor DarkGray
+    $countsByGpo = @{}
+    foreach ($row in $report) { $countsByGpo[$row.GPOName] = 1 + ($countsByGpo[$row.GPOName] ?? 0) }
     $allGPOs | ForEach-Object {
-        $gpoName = $_.DisplayName
-        $permCount = ($report | Where-Object { $_.GPOName -eq $gpoName }).Count
-        Write-Host ("  {0,-50} {1} entries" -f $gpoName, $permCount) -ForegroundColor Gray
+        $permCount = $countsByGpo[$_.DisplayName] ?? 0
+        Write-Host ("  {0,-50} {1} entries" -f $_.DisplayName, $permCount) -ForegroundColor Gray
     }
 } catch {
     Write-Log "Error: $($_.Exception.Message)" "Red"

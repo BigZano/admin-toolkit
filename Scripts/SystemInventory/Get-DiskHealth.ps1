@@ -1,4 +1,4 @@
-# Report disk space usage with warning thresholds and SMART health status
+# Report disk space usage with warning thresholds and physical disk device status
 
 param(
     [Parameter(Mandatory=$false)]
@@ -19,8 +19,6 @@ if ([string]::IsNullOrEmpty($OutputDirectory)) {
 if (-not (Test-Path $OutputDirectory)) { New-Item -Path $OutputDirectory -ItemType Directory -Force | Out-Null }
 
 $target    = if ([string]::IsNullOrEmpty($ComputerName)) { $env:COMPUTERNAME } else { $ComputerName }
-$warnPct   = [int]$WarnThresholdPct
-$critPct   = [int]$CritThresholdPct
 $timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
 $outputFile = Join-Path $OutputDirectory "DiskHealth_${target}_$timestamp.csv"
 $logFile    = Join-Path $OutputDirectory "DiskHealth_${target}_$timestamp.log"
@@ -31,10 +29,23 @@ function Write-Log {
     Write-Host $Message -ForegroundColor $Color
 }
 
+try {
+    $warnPct = [int]$WarnThresholdPct
+    $critPct = [int]$CritThresholdPct
+} catch {
+    Write-Log "Invalid threshold value — WarnThresholdPct ('$WarnThresholdPct') and CritThresholdPct ('$CritThresholdPct') must be whole numbers." "Red"
+    exit 1
+}
+if ($warnPct -ge $critPct) {
+    Write-Log "WarnThresholdPct ($warnPct) must be less than CritThresholdPct ($critPct)." "Red"
+    exit 1
+}
+
 Write-Log "Checking disk health on: $target  (warn: ${warnPct}%  crit: ${critPct}%)" "Cyan"
 
+$cimParams = @{}
 try {
-    $cimParams = if ($target -ne $env:COMPUTERNAME) { @{ CimSession = New-CimSession -ComputerName $target } } else { @{} }
+    if ($target -ne $env:COMPUTERNAME) { $cimParams = @{ CimSession = New-CimSession -ComputerName $target } }
 
     $logicalDisks = Get-CimInstance Win32_LogicalDisk @cimParams -Filter "DriveType=3" -ErrorAction Stop
     $physicalDisks = Get-CimInstance Win32_DiskDrive @cimParams -ErrorAction SilentlyContinue
@@ -72,7 +83,8 @@ try {
 
     if ($physicalDisks) {
         Write-Host ""
-        Write-Host "  Physical Disks (SMART status):" -ForegroundColor DarkGray
+        # Note: Win32_DiskDrive.Status is a generic device-availability flag, not true SMART data.
+        Write-Host "  Physical Disks (device status):" -ForegroundColor DarkGray
         $physicalDisks | ForEach-Object {
             $smartColor = if ($_.Status -eq "OK") { "Green" } else { "Red" }
             $sizeGB = [math]::Round($_.Size / 1GB, 0)
@@ -88,8 +100,8 @@ try {
 
     $report | Export-Csv -Path $outputFile -NoTypeInformation -Encoding UTF8
     Write-Log "Report saved to: $outputFile" "Green"
-
-    if ($cimParams.ContainsKey("CimSession")) { Remove-CimSession $cimParams["CimSession"] }
 } catch {
     Write-Log "Error: $($_.Exception.Message)" "Red"; exit 1
+} finally {
+    if ($cimParams.ContainsKey("CimSession")) { Remove-CimSession $cimParams["CimSession"] -ErrorAction SilentlyContinue }
 }

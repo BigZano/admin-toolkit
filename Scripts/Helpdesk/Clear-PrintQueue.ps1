@@ -12,6 +12,13 @@ function Write-Log {
     Write-Host "  $(Get-Date -Format 'HH:mm:ss')  $Message" -ForegroundColor $Color
 }
 
+try {
+    Import-Module PrintManagement -ErrorAction Stop
+} catch {
+    Write-Log "PrintManagement module not found. Install the Print Management feature/RSAT." "Red"
+    exit 1
+}
+
 $target = if ([string]::IsNullOrEmpty($ComputerName)) { $env:COMPUTERNAME } else { $ComputerName }
 $isLocal = $target -eq $env:COMPUTERNAME
 
@@ -26,9 +33,6 @@ Write-Host ""
 
 try {
     # Get current jobs before clearing
-    $jobFilter = if ($PrinterName) { "Name='$PrinterName'" } else { $null }
-    $cimParams = if (-not $isLocal) { @{ CimSession = New-CimSession -ComputerName $target } } else { @{} }
-
     $printers = if ($PrinterName) {
         Get-Printer -ComputerName $target -Name $PrinterName -ErrorAction Stop
     } else {
@@ -53,22 +57,46 @@ try {
     }
 
     Write-Host ""
-    Write-Log "Stopping Print Spooler on $target..." "Yellow"
+    if ($PrinterName) {
+        # Targeted clear: remove jobs from the named queue only — do NOT purge the
+        # spooler directory, which would kill jobs on every other printer.
+        Write-Log "Removing jobs from queue '$PrinterName' on $target..." "Yellow"
+        $removeErrors = 0
+        Get-PrintJob -PrinterName $PrinterName -ComputerName $target -ErrorAction Stop | ForEach-Object {
+            try {
+                Remove-PrintJob -InputObject $_ -ErrorAction Stop
+                Write-Log "  Removed job $($_.ID): $($_.DocumentName)" "Green"
+            } catch {
+                Write-Log "  Could not remove job $($_.ID): $($_.Exception.Message)" "Yellow"
+                $removeErrors++
+            }
+        }
+        if ($removeErrors -gt 0) {
+            Write-Log "$removeErrors job(s) resisted removal. Re-run without -PrinterName to restart the spooler and purge all queues." "Yellow"
+        }
+    } else {
+        # Clear-all: stop the spooler, purge spool files, restart.
+        Write-Log "Stopping Print Spooler on $target..." "Yellow"
 
-    Invoke-Command -ComputerName $target -ScriptBlock {
-        param($printer)
-        Stop-Service -Name Spooler -Force -ErrorAction Stop
+        $purgeBlock = {
+            Stop-Service -Name Spooler -Force -ErrorAction Stop
 
-        # Delete all spool files
-        $spoolPath = "$env:SystemRoot\System32\spool\PRINTERS"
-        $files = Get-ChildItem -Path $spoolPath -File -ErrorAction SilentlyContinue
-        $files | Remove-Item -Force -ErrorAction SilentlyContinue
-        $deleted = $files.Count
+            # Delete all spool files
+            $spoolPath = "$env:SystemRoot\System32\spool\PRINTERS"
+            $files = @(Get-ChildItem -Path $spoolPath -File -ErrorAction SilentlyContinue)
+            $files | Remove-Item -Force -ErrorAction SilentlyContinue
+            $deleted = $files.Count
 
-        Start-Service -Name Spooler -ErrorAction Stop
-        return $deleted
-    } -ArgumentList $PrinterName -ErrorAction Stop | ForEach-Object {
-        Write-Log "Deleted $_ spool file(s). Spooler restarted." "Green"
+            Start-Service -Name Spooler -ErrorAction Stop
+            return $deleted
+        }
+
+        $deleted = if ($isLocal) {
+            & $purgeBlock
+        } else {
+            Invoke-Command -ComputerName $target -ScriptBlock $purgeBlock -ErrorAction Stop
+        }
+        Write-Log "Deleted $deleted spool file(s). Spooler restarted." "Green"
     }
 
     # Verify queues are clear
@@ -80,12 +108,10 @@ try {
     }
 
     if ($remaining -eq 0) {
-        Write-Log "All print queues cleared." "Green"
+        Write-Log "All targeted print queues cleared." "Green"
     } else {
         Write-Log "$remaining job(s) still remain. A reboot of the print server may be needed." "Yellow"
     }
-
-    if ($cimParams.ContainsKey("CimSession")) { Remove-CimSession $cimParams["CimSession"] }
 } catch {
     Write-Log "Error: $($_.Exception.Message)" "Red"
     Write-Log "Ensure you have admin rights on $target and the Print Spooler is accessible." "Yellow"

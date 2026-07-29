@@ -12,6 +12,13 @@ function Write-Log {
     Write-Host "  $(Get-Date -Format 'HH:mm:ss')  $Message" -ForegroundColor $Color
 }
 
+# Hyper-V queries silently return no results without elevation, so fail loudly instead.
+$currentPrincipal = [Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
+if (-not $currentPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+    Write-Log "This script requires an elevated (Administrator) session — Hyper-V cmdlets return empty results without it." "Red"
+    exit 1
+}
+
 $getParams = @{ ErrorAction = "Stop" }
 if (-not [string]::IsNullOrEmpty($ComputerName)) { $getParams["ComputerName"] = $ComputerName }
 
@@ -22,15 +29,21 @@ try {
 }
 
 # Resolve target VMs
-$targets = if (-not [string]::IsNullOrEmpty($VMName)) {
-    $names = $VMName -split ',' | ForEach-Object { $_.Trim() }
-    $allVMs | Where-Object { $names -contains $_.Name }
+if (-not [string]::IsNullOrEmpty($VMName)) {
+    $names   = $VMName -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ }
+    $targets = @($allVMs | Where-Object { $names -contains $_.Name })
+    $missing = @($names | Where-Object { $targets.Name -notcontains $_ })
+    if ($missing.Count -gt 0) {
+        Write-Log "Requested VM(s) not found on this host: $($missing -join ', ')" "Yellow"
+    }
+    if ($targets.Count -eq 0) {
+        Write-Log "None of the requested VMs exist — nothing started." "Red"; exit 1
+    }
 } else {
-    $allVMs | Where-Object { $_.State -eq "Off" -or $_.State -eq "Saved" }
-}
-
-if (-not $targets -or @($targets).Count -eq 0) {
-    Write-Log "No matching VMs found to start." "Yellow"; exit 0
+    $targets = @($allVMs | Where-Object { $_.State -eq "Off" -or $_.State -eq "Saved" })
+    if ($targets.Count -eq 0) {
+        Write-Log "No stopped VMs found to start." "Yellow"; exit 0
+    }
 }
 
 Write-Host ""
@@ -64,3 +77,5 @@ $color = if ($failed -gt 0) { "Yellow" } else { "Green" }
 Write-Host ("  Started: $started  |  Failed: $failed") -ForegroundColor $color
 Write-Host ("=" * 55) -ForegroundColor DarkGray
 Write-Host ""
+
+if ($failed -gt 0) { exit 1 }

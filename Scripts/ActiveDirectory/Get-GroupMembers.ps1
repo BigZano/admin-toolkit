@@ -60,23 +60,50 @@ $expandMode = if ($isRecursive) { "Recursive" } else { "Direct members only" }
 Write-Log "Retrieving members ($expandMode)..." "Cyan"
 
 try {
-    $members = if ($isRecursive) {
-        Get-ADGroupMember -Identity $GroupName -Recursive
-    } else {
-        Get-ADGroupMember -Identity $GroupName
+    try {
+        $members = if ($isRecursive) {
+            Get-ADGroupMember -Identity $GroupName -Recursive -ErrorAction Stop
+        } else {
+            Get-ADGroupMember -Identity $GroupName -ErrorAction Stop
+        }
+    } catch {
+        # Get-ADGroupMember fails on very large groups (ADWS limit) and on groups
+        # containing foreign security principals — fall back to LDAP enumeration.
+        Write-Log "Get-ADGroupMember failed ($($_.Exception.Message)). Falling back to LDAP enumeration." "Yellow"
+        $members = if ($isRecursive) {
+            Get-ADObject -LDAPFilter "(memberOf:1.2.840.113556.1.4.1941:=$($group.DistinguishedName))" `
+                -Properties objectClass, SamAccountName -ErrorAction Stop
+        } else {
+            (Get-ADGroup -Identity $GroupName -Properties Members -ErrorAction Stop).Members |
+                ForEach-Object { Get-ADObject $_ -Properties objectClass, SamAccountName -ErrorAction Stop }
+        }
     }
 
     $report = $members | ForEach-Object {
+        $member = $_
         if ($_.objectClass -eq "user") {
-            $u = Get-ADUser $_.SamAccountName -Properties DisplayName, EmailAddress, Enabled, Department, Title
-            [PSCustomObject]@{
-                Type           = "User"
-                SamAccountName = $u.SamAccountName
-                DisplayName    = $u.DisplayName
-                Email          = $u.EmailAddress
-                Department     = $u.Department
-                Title          = $u.Title
-                Enabled        = $u.Enabled
+            try {
+                $u = Get-ADUser $member.distinguishedName -Properties DisplayName, EmailAddress, Enabled, Department, Title -ErrorAction Stop
+                [PSCustomObject]@{
+                    Type           = "User"
+                    SamAccountName = $u.SamAccountName
+                    DisplayName    = $u.DisplayName
+                    Email          = $u.EmailAddress
+                    Department     = $u.Department
+                    Title          = $u.Title
+                    Enabled        = $u.Enabled
+                }
+            } catch {
+                Write-Log "  Could not resolve member '$($member.SamAccountName)': $($_.Exception.Message)" "Yellow"
+                [PSCustomObject]@{
+                    Type           = "User"
+                    SamAccountName = $member.SamAccountName
+                    DisplayName    = "<lookup failed>"
+                    Email          = ""
+                    Department     = ""
+                    Title          = ""
+                    Enabled        = "?"
+                }
             }
         } elseif ($_.objectClass -eq "group") {
             [PSCustomObject]@{

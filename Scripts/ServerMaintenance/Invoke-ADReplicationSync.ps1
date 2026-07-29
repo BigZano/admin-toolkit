@@ -18,16 +18,26 @@ try {
     Write-Log "ActiveDirectory module not found. Install RSAT." "Red"; exit 1
 }
 
-$domain = Get-ADDomain -ErrorAction Stop
+try {
+    $domain = Get-ADDomain -ErrorAction Stop
+} catch {
+    Write-Log "Could not read domain information (is this machine domain-joined?): $($_.Exception.Message)" "Red"
+    exit 1
+}
 $defaultPartition = $domain.DistinguishedName
 
 $partition = if (-not [string]::IsNullOrEmpty($Partition)) { $Partition } else { $defaultPartition }
 
 # Get DCs to sync
-$dcs = if (-not [string]::IsNullOrEmpty($TargetDC)) {
-    @(Get-ADDomainController -Identity $TargetDC -ErrorAction Stop)
-} else {
-    @(Get-ADDomainController -Filter * -ErrorAction Stop)
+try {
+    $dcs = if (-not [string]::IsNullOrEmpty($TargetDC)) {
+        @(Get-ADDomainController -Identity $TargetDC -ErrorAction Stop)
+    } else {
+        @(Get-ADDomainController -Filter * -ErrorAction Stop)
+    }
+} catch {
+    Write-Log "Failed to enumerate domain controllers: $($_.Exception.Message)" "Red"
+    exit 1
 }
 
 Write-Host ""
@@ -41,11 +51,13 @@ $synced = 0; $failed = 0
 foreach ($dc in $dcs | Sort-Object Name) {
     Write-Log "Syncing: $($dc.Name) ($($dc.Site))" "Cyan"
     try {
-        $result = & repadmin /syncall $dc.Name $partition /AdeP 2>&1
-        $errors = $result | Where-Object { $_ -match "error|fail|SyncAll" -and $_ -notmatch "SyncAll completed" }
-
-        if ($errors) {
-            foreach ($err in $errors) { Write-Log "  $err" "Yellow" }
+        # Success is judged by exit code, not by parsing repadmin's (locale-dependent) text output.
+        # /deP: /d = show DNs, /e = cross-site (enterprise), /P = push. /A (all partitions) was
+        # dropped because it would override the explicitly passed partition.
+        $result = & repadmin /syncall $dc.Name $partition /deP 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            Write-Log "  Sync reported errors (repadmin exit code $LASTEXITCODE):" "Yellow"
+            $result | Select-Object -Last 10 | ForEach-Object { Write-Log "    $_" "Yellow" }
             $failed++
         } else {
             Write-Log "  Sync completed OK." "Green"
@@ -65,10 +77,16 @@ Write-Host ("=" * 60) -ForegroundColor DarkGray
 
 # Final replication summary
 Write-Host ""
-Write-Log "Running repadmin /replsummary..." "Cyan"
-$summary = & repadmin /replsummary 2>&1
-$summary | ForEach-Object {
-    $c = if ($_ -match "error|fail") { "Yellow" } else { "Gray" }
-    Write-Host "  $_" -ForegroundColor $c
+if (Get-Command repadmin -ErrorAction SilentlyContinue) {
+    Write-Log "Running repadmin /replsummary..." "Cyan"
+    $summary = & repadmin /replsummary 2>&1
+    $summary | ForEach-Object {
+        $c = if ($_ -match "error|fail") { "Yellow" } else { "Gray" }
+        Write-Host "  $_" -ForegroundColor $c
+    }
+} else {
+    Write-Log "repadmin not available (RSAT AD DS tools not installed) — skipping /replsummary." "Yellow"
 }
 Write-Host ""
+
+if ($failed -gt 0) { exit 1 }

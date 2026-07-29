@@ -38,33 +38,46 @@ $computers = if (-not [string]::IsNullOrEmpty($ComputerList) -and (Test-Path $Co
 
 Write-Log "Checking scheduled tasks on $($computers.Count) server(s)..." "Cyan"
 
+# Benign LastTaskResult values that are not failures:
+# 0 = success, 0x41301 = currently running, 0x41303 = task has not yet run, 0x41325 = queued.
+$benignResults = @(0, 0x41301, 0x41303, 0x41325)
+
+$collectScript = {
+    param($filter, $failedOnly)
+    $benign = @(0, 0x41301, 0x41303, 0x41325)
+    $allTasks = Get-ScheduledTask -ErrorAction SilentlyContinue |
+        Where-Object { $_.TaskPath -notmatch "\\Microsoft\\" } |
+        Where-Object { -not $filter -or $_.TaskName -match $filter }
+
+    foreach ($t in $allTasks) {
+        $info = $t | Get-ScheduledTaskInfo -ErrorAction SilentlyContinue
+        if ($failedOnly -and ($null -eq $info.LastTaskResult -or $benign -contains [int64]$info.LastTaskResult)) { continue }
+
+        [PSCustomObject]@{
+            Computer        = $env:COMPUTERNAME
+            Name            = $t.TaskName
+            Path            = $t.TaskPath
+            State           = $t.State
+            LastRunTime     = $info.LastRunTime
+            LastResult      = $info.LastTaskResult
+            NextRunTime     = $info.NextRunTime
+        }
+    }
+}
+
 $report = @()
 foreach ($computer in $computers) {
     Write-Host ""
     Write-Host "  $computer" -ForegroundColor Cyan
 
     try {
-        $tasks = Invoke-Command -ComputerName $computer -ErrorAction Stop -ScriptBlock {
-            param($filter, $failedOnly)
-            $allTasks = Get-ScheduledTask -ErrorAction SilentlyContinue |
-                Where-Object { $_.TaskPath -notmatch "\\Microsoft\\" } |
-                Where-Object { -not $filter -or $_.TaskName -match $filter }
-
-            foreach ($t in $allTasks) {
-                $info = $t | Get-ScheduledTaskInfo -ErrorAction SilentlyContinue
-                if ($failedOnly -and ($info.LastTaskResult -eq 0 -or $info.LastTaskResult -eq $null)) { continue }
-
-                [PSCustomObject]@{
-                    Computer        = $env:COMPUTERNAME
-                    Name            = $t.TaskName
-                    Path            = $t.TaskPath
-                    State           = $t.State
-                    LastRunTime     = $info.LastRunTime
-                    LastResult      = $info.LastTaskResult
-                    NextRunTime     = $info.NextRunTime
-                }
-            }
-        } -ArgumentList $FilterName, $showFailedOnly
+        $filterPattern = if ([string]::IsNullOrEmpty($FilterName)) { "" } else { [regex]::Escape($FilterName) }
+        $tasks = if ($computer -eq $env:COMPUTERNAME) {
+            & $collectScript $filterPattern $showFailedOnly
+        } else {
+            Invoke-Command -ComputerName $computer -ErrorAction Stop -ScriptBlock $collectScript `
+                -ArgumentList $filterPattern, $showFailedOnly
+        }
 
         if (-not $tasks -or @($tasks).Count -eq 0) {
             Write-Host "    No tasks found matching criteria." -ForegroundColor DarkGray
@@ -79,7 +92,7 @@ foreach ($computer in $computers) {
             $nextRun = if ($t.NextRunTime -and $t.NextRunTime.Year -gt 1900) { $t.NextRunTime.ToString("yyyy-MM-dd HH:mm") } else { "-" }
             $result  = "0x{0:X}" -f $t.LastResult
 
-            $color = if ($t.LastResult -ne 0 -and $t.LastResult -ne $null -and $lastRun -ne "Never") { "Yellow" }
+            $color = if ($null -ne $t.LastResult -and $benignResults -notcontains [int64]$t.LastResult -and $lastRun -ne "Never") { "Yellow" }
                      elseif ($t.State -eq "Disabled") { "DarkGray" }
                      else { "White" }
 
@@ -95,9 +108,11 @@ foreach ($computer in $computers) {
 }
 
 Write-Host ""
-$failed  = @($report | Where-Object { $_.LastResult -ne 0 -and $_.LastRunTime -and $_.LastRunTime.Year -gt 1900 }).Count
+$failed  = @($report | Where-Object {
+    $null -ne $_.LastResult -and $benignResults -notcontains [int64]$_.LastResult -and
+    $_.LastRunTime -and $_.LastRunTime.Year -gt 1900 }).Count
 $color   = if ($failed -gt 0) { "Yellow" } else { "Green" }
-Write-Log ("Total tasks: $($report.Count)  |  Non-zero last result: $failed") $color
+Write-Log ("Total tasks: $($report.Count)  |  Failed last result: $failed") $color
 
 $report | Export-Csv -Path $outputFile -NoTypeInformation -Encoding UTF8
 Write-Host ""; Write-Log "Report saved to: $outputFile" "Green"

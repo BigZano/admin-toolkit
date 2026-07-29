@@ -39,27 +39,47 @@ try {
 Write-Log "Looking up user: $Username" "Cyan"
 
 try {
-    $user = Get-ADUser -Identity $Username -Properties * -ErrorAction Stop
+    $user = Get-ADUser -Identity $Username -Properties DisplayName, UserPrincipalName, EmailAddress, `
+        Title, Department, Manager, Enabled, LockedOut, PasswordLastSet, PasswordNeverExpires, `
+        LastLogonDate, Created, DistinguishedName -ErrorAction Stop
 } catch {
     Write-Log "User '$Username' not found: $($_.Exception.Message)" "Red"
     exit 1
 }
 
-# Resolve password expiry
-$maxPasswordAge = (Get-ADDefaultDomainPasswordPolicy).MaxPasswordAge
+# Resolve password expiry (prefer Fine-Grained Password Policy if one applies)
+$maxPasswordAge = $null
+try {
+    $fgpp = Get-ADUserResultantPasswordPolicy $user -ErrorAction Stop
+    $maxPasswordAge = $fgpp.MaxPasswordAge
+} catch {
+    try {
+        $maxPasswordAge = (Get-ADDefaultDomainPasswordPolicy -ErrorAction Stop).MaxPasswordAge
+    } catch {
+        Write-Log "Could not read password policy: $($_.Exception.Message)" "Yellow"
+    }
+}
 $passwordExpiry = if ($user.PasswordNeverExpires) {
     "Never expires"
+} elseif (-not $maxPasswordAge -or $maxPasswordAge.TotalDays -le 0) {
+    "No expiry policy"
 } elseif ($user.PasswordLastSet) {
     ($user.PasswordLastSet + $maxPasswordAge).ToString("yyyy-MM-dd HH:mm")
 } else {
     "Unknown"
 }
 
-# Last logon (use the more recent of LastLogon and LastLogonDate)
+# Last logon (LastLogonDate = replicated lastLogonTimestamp; may lag up to ~14 days)
 $lastLogon = if ($user.LastLogonDate) { $user.LastLogonDate.ToString("yyyy-MM-dd HH:mm") } else { "Never" }
 
 # Group memberships
-$groups = (Get-ADPrincipalGroupMembership $user | Select-Object -ExpandProperty Name | Sort-Object) -join ", "
+try {
+    $groups = (Get-ADPrincipalGroupMembership $user -ErrorAction Stop |
+        Select-Object -ExpandProperty Name | Sort-Object) -join ", "
+} catch {
+    Write-Log "Could not retrieve group memberships: $($_.Exception.Message)" "Yellow"
+    $groups = "<lookup failed>"
+}
 
 Write-Host ""
 Write-Host ("=" * 60) -ForegroundColor DarkGray
@@ -73,7 +93,7 @@ $fields = [ordered]@{
     "Email"             = $user.EmailAddress
     "Title"             = $user.Title
     "Department"        = $user.Department
-    "Manager"           = if ($user.Manager) { (Get-ADUser $user.Manager).Name } else { "None" }
+    "Manager"           = if ($user.Manager) { try { (Get-ADUser $user.Manager -ErrorAction Stop).Name } catch { $user.Manager } } else { "None" }
     "OU Path"           = ($user.DistinguishedName -replace '^CN=[^,]+,', '')
     "Account Enabled"   = $user.Enabled
     "Locked Out"        = $user.LockedOut

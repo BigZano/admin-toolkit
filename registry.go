@@ -271,25 +271,25 @@ func splitCamel(s string) string {
 
 var paramLabels = map[string]string{
 	// Identity
-	"Username":        "Username (e.g. jsmith)",
-	"Upn":             "Email address",
-	"DisplayName":     "Display name (full name)",
-	"FirstName":       "First name",
-	"LastName":        "Last name",
-	"Password":        "Password",
-	"NewPassword":     "New password",
-	"Title":           "Job title (optional)",
-	"Department":      "Department (optional)",
+	"Username":    "Username (e.g. jsmith)",
+	"Upn":         "Email address",
+	"DisplayName": "Display name (full name)",
+	"FirstName":   "First name",
+	"LastName":    "Last name",
+	"Password":    "Password",
+	"NewPassword": "New password",
+	"Title":       "Job title (optional)",
+	"Department":  "Department (optional)",
 
 	// Groups / AD
-	"GroupName":    "Group name",
-	"SourceUser":   "Source account (copy groups from)",
-	"TargetUser":   "Target account (copy groups to)",
-	"TemplateUser": "Template account (copy groups from, optional)",
-	"TargetOU":     "OU for new account (leave blank for default)",
-	"DisabledOU":   "Move to OU when disabling (optional)",
+	"GroupName":       "Group name",
+	"SourceUser":      "Source account (copy groups from)",
+	"TargetUser":      "Target account (copy groups to)",
+	"TemplateUser":    "Template account (copy groups from, optional)",
+	"TargetOU":        "OU for new account (leave blank for default)",
+	"DisabledOU":      "Move to OU when disabling (optional)",
 	"DisabledUsersOU": "Disabled accounts OU (optional)",
-	"OOOMessage":   "Out-of-office reply (optional)",
+	"OOOMessage":      "Out-of-office reply (optional)",
 
 	// Computers / services
 	"ComputerName": "Computer name",
@@ -338,20 +338,34 @@ var paramLabels = map[string]string{
 	"UsageLocation":   "Country code (e.g. US, GB, CA)",
 
 	// GPO / misc
-	"ReportType":       "Report format (HTML, XML, or Both)",
+	"ReportType":         "Report format (HTML, XML, or Both)",
 	"ForceChangeAtLogon": "Force password change at next login (true/false)",
-	"FilterName":       "Filter by name (leave blank for all)",
-	"FilterStatus":     "Filter by status (Running, Stopped, or blank for all)",
+	"FilterName":         "Filter by name (leave blank for all)",
+	"FilterStatus":       "Filter by status (Running, Stopped, or blank for all)",
 
 	// Hyper-V
-	"VMName":          "VM name(s), comma-separated (leave blank for all)",
-	"CheckpointName":  "Checkpoint name (leave blank for auto-name)",
-	"ExportPath":      "Destination folder for the export",
-	"Force":           "Force power-off without shutdown (true/false)",
+	"VMName":         "VM name(s), comma-separated (leave blank for all)",
+	"CheckpointName": "Checkpoint name (leave blank for auto-name)",
+	"ExportPath":     "Destination folder for the export",
+	"Force":          "Force power-off without shutdown (true/false)",
 
 	// Server maintenance
-	"TargetDC":        "Domain controller to target (leave blank for all)",
-	"Partition":       "AD partition DN (leave blank for domain default)",
-	"DFSGroupName":    "DFS-R group name (leave blank for all)",
-	"FailedOnly":      "Show only tasks with non-zero last result (true/false)",
+	"TargetDC":     "Domain controller to target (leave blank for all)",
+	"Partition":    "AD partition DN (leave blank for domain default)",
+	"DFSGroupName": "DFS-R group name (leave blank for all)",
+	"FailedOnly":   "Show only tasks with non-zero last result (true/false)",
+
+	// Event logs / history
+	"DaysBack":  "Days of history to search",
+	"MaxEvents": "Max events to scan (default: 50000)",
+	"LogName":   "Event log name (e.g. System, Application)",
+	"EventId":   "Event ID(s), comma-separated (optional)",
+	"Keyword":   "Keyword to find in event message (optional)",
+
+	// Cleanup / toggles
+	"DryRun":            "Dry run — report only, change nothing (true/false)",
+	"RenewDhcp":         "Also release/renew DHCP lease (true/false)",
+	"Enabled":           "Enable (true) or disable (false)",
+	"ExcludeBuiltin":    "Exclude built-in system groups (true/false)",
+	"IncludeInboxRules": "Also scan inbox rules — slow on big tenants (true/false)",
 }

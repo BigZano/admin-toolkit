@@ -6,6 +6,8 @@ param(
     [Parameter(Mandatory=$false)]
     [string]$BruteForceThreshold = "10",
     [Parameter(Mandatory=$false)]
+    [string]$MaxEvents = "50000",
+    [Parameter(Mandatory=$false)]
     [string]$OutputDirectory = ""
 )
 
@@ -16,18 +18,30 @@ if ([string]::IsNullOrEmpty($OutputDirectory)) {
 }
 if (-not (Test-Path $OutputDirectory)) { New-Item -Path $OutputDirectory -ItemType Directory -Force | Out-Null }
 
-$hours     = [int]$HoursBack
-$threshold = [int]$BruteForceThreshold
-$since     = (Get-Date).AddHours(-$hours)
 $timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
-$outputFile = Join-Path $OutputDirectory "FailedLogins_${hours}hrs_$timestamp.csv"
-$logFile    = Join-Path $OutputDirectory "FailedLogins_$timestamp.log"
+$logFile   = Join-Path $OutputDirectory "FailedLogins_$timestamp.log"
 
 function Write-Log {
     param([string]$Message, [string]$Color = "White")
     "[$( Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] $Message" | Out-File $logFile -Append
     Write-Host $Message -ForegroundColor $Color
 }
+
+$hours = 0
+if (-not [int]::TryParse($HoursBack, [ref]$hours) -or $hours -lt 1) {
+    Write-Log "Invalid HoursBack value: '$HoursBack' (expected an integer >= 1)" "Red"; exit 1
+}
+$threshold = 0
+if (-not [int]::TryParse($BruteForceThreshold, [ref]$threshold) -or $threshold -lt 1) {
+    Write-Log "Invalid BruteForceThreshold value: '$BruteForceThreshold' (expected an integer >= 1)" "Red"; exit 1
+}
+$maxEv = 0
+if (-not [int]::TryParse($MaxEvents, [ref]$maxEv) -or $maxEv -lt 1) {
+    Write-Log "Invalid MaxEvents value: '$MaxEvents' (expected an integer >= 1)" "Red"; exit 1
+}
+
+$since      = (Get-Date).AddHours(-$hours)
+$outputFile = Join-Path $OutputDirectory "FailedLogins_${hours}hrs_$timestamp.csv"
 
 # Logon failure reason codes
 $failureCodes = @{
@@ -44,40 +58,47 @@ $failureCodes = @{
     "0xC0000234" = "Account locked out"
 }
 
-Write-Log "Querying Security event log for failed logins in the last $hours hours..." "Cyan"
+Write-Log "Querying Security event log for failed logins in the last $hours hours (max $maxEv events)..." "Cyan"
 
 try {
     $events = Get-WinEvent -FilterHashtable @{
         LogName   = 'Security'
         Id        = 4625
         StartTime = $since
-    } -ErrorAction Stop
+    } -MaxEvents $maxEv -ErrorAction Stop
 
     Write-Log "Found $($events.Count) failed login events." "$(if ($events.Count -gt 0) { 'Yellow' } else { 'Green' })"
+    if ($events.Count -eq $maxEv) {
+        Write-Log "Result capped at MaxEvents=$maxEv (most recent events); raise MaxEvents to see more." "Yellow"
+    }
 
     $parsed = $events | ForEach-Object {
         $xml = [xml]$_.ToXml()
-        $data = $xml.Event.EventData.Data
+        # Build one field lookup per event instead of repeated Where-Object scans
+        $lookup = @{}
+        foreach ($d in $xml.Event.EventData.Data) {
+            if ($d.Name) { $lookup[$d.Name] = $d.'#text' }
+        }
 
-        $subStatus = ($data | Where-Object { $_.Name -eq "SubStatus" }).'#text'
-        $reason = if ($failureCodes.ContainsKey($subStatus)) { $failureCodes[$subStatus] } else { $subStatus }
+        $subStatus = $lookup["SubStatus"]
+        $reason = if ($subStatus -and $failureCodes.ContainsKey($subStatus)) { $failureCodes[$subStatus] } else { $subStatus }
 
         [PSCustomObject]@{
-            TimeCreated    = $_.TimeCreated.ToString("yyyy-MM-dd HH:mm:ss")
-            TargetAccount  = ($data | Where-Object { $_.Name -eq "TargetUserName" }).'#text'
-            TargetDomain   = ($data | Where-Object { $_.Name -eq "TargetDomainName" }).'#text'
-            SourceIP       = ($data | Where-Object { $_.Name -eq "IpAddress" }).'#text'
-            SourcePort     = ($data | Where-Object { $_.Name -eq "IpPort" }).'#text'
-            LogonType      = ($data | Where-Object { $_.Name -eq "LogonType" }).'#text'
-            WorkstationName = ($data | Where-Object { $_.Name -eq "WorkstationName" }).'#text'
-            FailureReason  = $reason
+            TimeCreated     = $_.TimeCreated.ToString("yyyy-MM-dd HH:mm:ss")
+            TargetAccount   = $lookup["TargetUserName"]
+            TargetDomain    = $lookup["TargetDomainName"]
+            SourceIP        = $lookup["IpAddress"]
+            SourcePort      = $lookup["IpPort"]
+            LogonType       = $lookup["LogonType"]
+            WorkstationName = $lookup["WorkstationName"]
+            FailureReason   = $reason
         }
-    } | Where-Object { $_.TargetAccount -ne "-" -and $_.TargetAccount -ne $null }
+    } | Where-Object { $_.TargetAccount -and $_.TargetAccount -ne "-" }
 
     # Brute force detection: accounts or IPs with >= threshold failures
     Write-Host ""
     $byAccount = $parsed | Group-Object TargetAccount | Sort-Object Count -Descending
-    $byIP      = $parsed | Where-Object { $_.SourceIP -ne "-" -and $_.SourceIP -ne $null } |
+    $byIP      = $parsed | Where-Object { $_.SourceIP -and $_.SourceIP -ne "-" } |
                  Group-Object SourceIP | Sort-Object Count -Descending
 
     $bruteAccounts = @($byAccount | Where-Object { $_.Count -ge $threshold })
@@ -104,10 +125,15 @@ try {
         Write-Host ("  {0,-35} {1}" -f $_.Name, $_.Count) -ForegroundColor $color
     }
 
-    $parsed | Export-Csv -Path $outputFile -NoTypeInformation -Encoding UTF8
-    Write-Host ""; Write-Log "Report saved to: $outputFile" "Green"
-} catch [System.Exception] {
-    if ($_.Exception.Message -match "No events") {
+    if ($parsed) {
+        $parsed | Export-Csv -Path $outputFile -NoTypeInformation -Encoding UTF8
+        Write-Host ""; Write-Log "Report saved to: $outputFile" "Green"
+    } else {
+        Write-Log "No parseable failed logins after filtering; no CSV report generated." "Green"
+    }
+} catch {
+    # Locale-stable check for the "no events matched" condition
+    if ($_.FullyQualifiedErrorId -eq "NoMatchingEventsFound,Microsoft.PowerShell.Commands.GetWinEventCommand") {
         Write-Log "No failed login events found in the last $hours hours." "Green"
     } else {
         Write-Log "Error: $($_.Exception.Message)" "Red"
