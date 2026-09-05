@@ -700,18 +700,35 @@ func (m model) missingRequired() []string {
 	return missing
 }
 
-func (m model) collectValues() map[string]string {
-	vals := make(map[string]string)
+func (m model) collectValues() (args map[string]string, secrets []string) {
+	args = make(map[string]string)
 	for i, param := range m.curScript.Params {
 		v := strings.TrimSpace(m.inputs[i].Value())
 		if v == "" {
 			v = param.Default
 		}
+		if param.Password {
+			secrets = append(secrets, v)
+			continue
+		}
 		if v != "" {
-			vals[param.Name] = v
+			args[param.Name] = v
 		}
 	}
-	return vals
+	return args, secrets
+}
+
+// clearSecretInputs blanks any password-flagged input field once its value
+// has been handed off to the child process. The TUI process outlives the
+// child by the rest of the session, so leaving the plaintext in a live
+// textinput.Model would be a bigger exposure window than anything on the
+// child's side.
+func (m *model) clearSecretInputs() {
+	for i, param := range m.curScript.Params {
+		if param.Password {
+			m.inputs[i].SetValue("")
+		}
+	}
 }
 
 func (m model) inputByName(name string) string {
