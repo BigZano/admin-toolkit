@@ -107,7 +107,7 @@ func extractDescription(content string) string {
 			continue
 		}
 		if strings.HasPrefix(s, "#") {
-			desc := strings.TrimSpace(strings.TrimLeft(s, "#"))
+			desc := sanitizeText(strings.TrimSpace(strings.TrimLeft(s, "#")))
 			if len(desc) > 10 {
 				return desc
 			}
@@ -165,7 +165,7 @@ func extractParams(content string) []ScriptParam {
 		if em == nil {
 			continue
 		}
-		paramType, paramName, defaultVal := em[1], em[2], strings.TrimSpace(em[3])
+		paramType, paramName, defaultVal := em[1], em[2], sanitizeText(strings.TrimSpace(em[3]))
 		if strings.EqualFold(paramType, "switch") {
 			continue
 		}
