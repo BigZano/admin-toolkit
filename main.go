@@ -203,7 +203,7 @@ func (m model) updateScripts(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		m.curScript = m.scripts[m.scriptIdx]
 		if len(m.curScript.Params) == 0 {
-			return m, m.startExec(m.curScript, nil)
+			return m, m.startExec(m.curScript, nil, nil)
 		}
 		m.inputs = buildInputs(m.curScript)
 		m.inputFocus = 0
@@ -274,8 +274,9 @@ func (m model) updateParamInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m model) updateConfirm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "enter":
-		params := m.collectValues()
-		return m, m.startExec(m.curScript, params)
+		args, secrets := m.collectValues()
+		m.clearSecretInputs()
+		return m, m.startExec(m.curScript, args, secrets)
 	case "r":
 		m.state = stateParamInput
 		if len(m.inputs) > 0 {
@@ -351,7 +352,7 @@ func (m model) updateAdoptModal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 // ── Execution ────────────────────────────────────────────────────────────────
 
-func (m *model) startExec(script *ScriptInfo, params map[string]string) tea.Cmd {
+func (m *model) startExec(script *ScriptInfo, args map[string]string, secrets []string) tea.Cmd {
 	m.outLines = nil
 	m.outError = ""
 	m.execCh = make(chan execOutputMsg, 64)
@@ -362,17 +363,27 @@ func (m *model) startExec(script *ScriptInfo, params map[string]string) tea.Cmd 
 	return tea.Batch(
 		listenExec(ch),
 		func() tea.Msg {
-			args := []string{"-NoProfile", "-NonInteractive", "-File", script.Path}
-			for k, v := range params {
-				args = append(args, "-"+k, v)
-			}
-			cmd := exec.Command("pwsh", args...)
+			cmdArgs := []string{"-NoProfile", "-NonInteractive", "-File", script.Path}
+			cmdArgs = append(cmdArgs, buildArgs(args)...)
+			cmd := exec.Command("pwsh", cmdArgs...)
+			stdin, _ := cmd.StdinPipe()
 			stdout, _ := cmd.StdoutPipe()
 			stderr, _ := cmd.StderrPipe()
 			if err := cmd.Start(); err != nil {
 				close(ch)
 				return execDoneMsg{exitCode: 1, err: err}
 			}
+			// Secrets are one short line each; writing them before the
+			// stdout/stderr readers start can't deadlock on pipe-buffer
+			// limits at this size.
+			for _, secret := range secrets {
+				b := []byte(secret + "\n")
+				stdin.Write(b)
+				for i := range b {
+					b[i] = 0
+				}
+			}
+			stdin.Close()
 			var wg sync.WaitGroup
 			wg.Add(2)
 			go func() {
