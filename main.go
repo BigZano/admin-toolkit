@@ -379,14 +379,14 @@ func (m *model) startExec(script *ScriptInfo, params map[string]string) tea.Cmd 
 				defer wg.Done()
 				sc := bufio.NewScanner(stdout)
 				for sc.Scan() {
-					ch <- execOutputMsg(sc.Text() + "\n")
+					ch <- execOutputMsg(sanitizeText(sc.Text()) + "\n")
 				}
 			}()
 			go func() {
 				defer wg.Done()
 				sc := bufio.NewScanner(stderr)
 				for sc.Scan() {
-					ch <- execOutputMsg(dimSt.Render("  "+sc.Text()) + "\n")
+					ch <- execOutputMsg(dimSt.Render("  "+sanitizeText(sc.Text())) + "\n")
 				}
 			}()
 			wg.Wait()
