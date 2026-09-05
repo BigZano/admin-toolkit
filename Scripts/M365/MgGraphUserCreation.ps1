@@ -101,7 +101,11 @@ if (-not $ListLicenses) {
     Write-Log "Converting user password to secure format..." "Yellow"
     $secureUserPassword = New-Object System.Security.SecureString
     if (-not $Password -and [Console]::IsInputRedirected) {
-        while (($ch = [Console]::In.Read()) -notin -1, 13, 10) { $secureUserPassword.AppendChar([char]$ch) }
+        # Read via an explicit UTF-8 reader rather than [Console]::In — the latter decodes using the inherited console code page, which silently corrupts non-ASCII passwords under a non-UTF-8 console.
+        $reader = New-Object System.IO.StreamReader(
+            [Console]::OpenStandardInput(),
+            (New-Object System.Text.UTF8Encoding($false)))
+        while (($ch = $reader.Read()) -notin -1, 13, 10) { $secureUserPassword.AppendChar([char]$ch) }
     } elseif ($Password) {
         $secureUserPassword = ConvertTo-SecureString $Password -AsPlainText -Force
     }

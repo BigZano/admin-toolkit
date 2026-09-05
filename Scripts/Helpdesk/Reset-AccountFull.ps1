@@ -99,7 +99,11 @@ if (-not $user.Enabled) {
 # is an optional step in this script (unlock/status-check can run without it).
 if (-not $NewPassword -and [Console]::IsInputRedirected) {
     $secure = New-Object System.Security.SecureString
-    while (($ch = [Console]::In.Read()) -notin -1, 13, 10) { $secure.AppendChar([char]$ch) }
+    # Read via an explicit UTF-8 reader rather than [Console]::In — the latter decodes using the inherited console code page, which silently corrupts non-ASCII passwords under a non-UTF-8 console.
+    $reader = New-Object System.IO.StreamReader(
+        [Console]::OpenStandardInput(),
+        (New-Object System.Text.UTF8Encoding($false)))
+    while (($ch = $reader.Read()) -notin -1, 13, 10) { $secure.AppendChar([char]$ch) }
     $secure.MakeReadOnly()
 } elseif ($NewPassword) {
     $secure = ConvertTo-SecureString $NewPassword -AsPlainText -Force

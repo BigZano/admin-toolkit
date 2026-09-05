@@ -14,6 +14,7 @@ to change when you add a script.
 - **Confirmation step** — review every parameter before a script runs
 - **Edit & add in place** — open a script in your editor (`e`) or import an external `.ps1` (`a`) without leaving the TUI
 - **Password masking** — fields named like passwords are hidden in the input and confirmation views
+- **Stdin delivery** — fields named like passwords are sent to the script over stdin, never as a command-line argument
 - **Reports** — scripts write CSVs to `~/Documents/AdminToolReports`
 
 ## Script categories

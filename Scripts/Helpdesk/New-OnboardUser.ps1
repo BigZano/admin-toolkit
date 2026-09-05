@@ -68,11 +68,20 @@ Write-Host ""
 
 if (-not $Password -and [Console]::IsInputRedirected) {
     $secure = New-Object System.Security.SecureString
-    while (($ch = [Console]::In.Read()) -notin -1, 13, 10) { $secure.AppendChar([char]$ch) }
+    # Read via an explicit UTF-8 reader rather than [Console]::In — the latter decodes using the inherited console code page, which silently corrupts non-ASCII passwords under a non-UTF-8 console.
+    $reader = New-Object System.IO.StreamReader(
+        [Console]::OpenStandardInput(),
+        (New-Object System.Text.UTF8Encoding($false)))
+    while (($ch = $reader.Read()) -notin -1, 13, 10) { $secure.AppendChar([char]$ch) }
     $secure.MakeReadOnly()
 } elseif ($Password) {
     $secure = ConvertTo-SecureString $Password -AsPlainText -Force
 } else {
+    Write-Log "No password supplied (use -Password, or pipe one via stdin)." "Red"
+    exit 1
+}
+
+if ($secure.Length -eq 0) {
     Write-Log "No password supplied (use -Password, or pipe one via stdin)." "Red"
     exit 1
 }

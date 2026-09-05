@@ -837,7 +837,9 @@ func (m model) renderAdoptModal() string {
 	sb.WriteString(accentSt.Render("  ⚠  Disclaimer") + "\n\n")
 	sb.WriteString(normalSt.Render("  New scripts are not tested by this tool.\n"))
 	sb.WriteString(normalSt.Render("  Ensure the script has a # description on\n"))
-	sb.WriteString(normalSt.Render("  line 1 and a param() block before adding.\n\n"))
+	sb.WriteString(normalSt.Render("  line 1 and a param() block before adding.\n"))
+	sb.WriteString(normalSt.Render("  Params named like passwords are sent via\n"))
+	sb.WriteString(normalSt.Render("  stdin, not as an argument.\n\n"))
 	sb.WriteString(dimSt.Render("  Enter to add  ·  Esc to cancel"))
 	return modalSt.Width(58).Render(sb.String())
 }
