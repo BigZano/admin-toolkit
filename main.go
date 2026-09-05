@@ -14,6 +14,7 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"golang.org/x/sys/windows"
 )
 
 // ── States & messages ────────────────────────────────────────────────────────
@@ -754,7 +755,15 @@ func (m model) inputByName(name string) string {
 // ── Edit / Adopt helpers ──────────────────────────────────────────────────────
 
 func openInEditor(path string) {
-	exec.Command("cmd", "/c", "start", "", path).Start()
+	verb, err := windows.UTF16PtrFromString("open")
+	if err != nil {
+		return
+	}
+	file, err := windows.UTF16PtrFromString(path)
+	if err != nil {
+		return
+	}
+	_ = windows.ShellExecute(0, verb, file, nil, nil, windows.SW_SHOWNORMAL)
 }
 
 func newAdoptInput() (textinput.Model, string) {
