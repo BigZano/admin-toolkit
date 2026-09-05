@@ -71,13 +71,16 @@ if (-not $ListLicenses -and $LicenseSKU -ne "" -and $licenseIndexValue -ge 0) {
     exit 1
 }
 
-# If not listing licenses, ensure required user creation params are present
+# If not listing licenses, ensure required user creation params are present.
+# Password is checked for availability (argv OR a redirected stdin the TUI
+# will pipe it through), not for an already-nonempty value — it's converted
+# to a SecureString further down, after this check.
 if (-not $ListLicenses) {
     $missing = @()
     if (-not $DisplayName) { $missing += 'DisplayName' }
     if (-not $UserPrincipalName) { $missing += 'UserPrincipalName' }
     if (-not $UsageLocation) { $missing += 'UsageLocation' }
-    if (-not $Password) { $missing += 'Password' }
+    if (-not $Password -and -not [Console]::IsInputRedirected) { $missing += 'Password' }
     if ($missing.Count -gt 0) {
         Write-Log "FATAL: Missing required parameters: $($missing -join ', ')" "Red"
         Write-Log "SOLUTION: Provide all mandatory fields for user creation or use -ListLicenses mode." "Yellow"
@@ -93,13 +96,22 @@ if (-not $ListLicenses -and $UsageLocation.Length -ne 2) {
 }
 if (-not $ListLicenses) { $UsageLocation = $UsageLocation.ToUpper() }
 
-# Convert user password to SecureString (no admin password needed with OAuth)
+# Build the secure password (from -Password, or piped via stdin by the TUI)
 if (-not $ListLicenses) {
     Write-Log "Converting user password to secure format..." "Yellow"
-    $secureUserPassword = ConvertTo-SecureString $Password -AsPlainText -Force
-    # Clear plain text password from memory
+    $secureUserPassword = New-Object System.Security.SecureString
+    if (-not $Password -and [Console]::IsInputRedirected) {
+        while (($ch = [Console]::In.Read()) -notin -1, 13, 10) { $secureUserPassword.AppendChar([char]$ch) }
+    } elseif ($Password) {
+        $secureUserPassword = ConvertTo-SecureString $Password -AsPlainText -Force
+    }
+    $secureUserPassword.MakeReadOnly()
     $Password = $null
     [System.GC]::Collect()
+    if ($secureUserPassword.Length -eq 0) {
+        Write-Log "FATAL: No password supplied (use -Password, or pipe one via stdin)." "Red"
+        exit 1
+    }
 }
 
 Write-Log ""

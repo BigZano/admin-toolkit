@@ -92,11 +92,25 @@ if (-not $user.Enabled) {
     Write-Log "To re-enable: Enable-ADAccount -Identity $Username" "Yellow"
 }
 
+# Build the secure password up front — from -NewPassword if given, or piped
+# via stdin by the TUI (so a full plaintext copy never exists in this
+# process). A direct/interactive run with neither yields an empty
+# SecureString, treated the same as "not provided" below — password reset
+# is an optional step in this script (unlock/status-check can run without it).
+if (-not $NewPassword -and [Console]::IsInputRedirected) {
+    $secure = New-Object System.Security.SecureString
+    while (($ch = [Console]::In.Read()) -notin -1, 13, 10) { $secure.AppendChar([char]$ch) }
+    $secure.MakeReadOnly()
+} elseif ($NewPassword) {
+    $secure = ConvertTo-SecureString $NewPassword -AsPlainText -Force
+} else {
+    $secure = New-Object System.Security.SecureString
+}
+
 # Reset password if provided
-if (-not [string]::IsNullOrEmpty($NewPassword)) {
+if ($secure.Length -gt 0) {
     $pwReset = $false
     try {
-        $secure = ConvertTo-SecureString $NewPassword -AsPlainText -Force
         Set-ADAccountPassword -Identity $Username -NewPassword $secure -Reset -ErrorAction Stop
         $pwReset = $true
     } catch {

@@ -7,8 +7,8 @@ param(
     [string]$LastName,
     [Parameter(Mandatory=$true)]
     [string]$Username,
-    [Parameter(Mandatory=$true)]
-    [string]$Password,
+    [Parameter(Mandatory=$false)]
+    [string]$Password = "",
     [Parameter(Mandatory=$false)]
     [string]$Title = "",
     [Parameter(Mandatory=$false)]
@@ -66,6 +66,17 @@ Write-Host ("  UPN: {0}  |  OU: {1}" -f $upn, $ou) -ForegroundColor Gray
 Write-Host ("=" * 60) -ForegroundColor DarkGray
 Write-Host ""
 
+if (-not $Password -and [Console]::IsInputRedirected) {
+    $secure = New-Object System.Security.SecureString
+    while (($ch = [Console]::In.Read()) -notin -1, 13, 10) { $secure.AppendChar([char]$ch) }
+    $secure.MakeReadOnly()
+} elseif ($Password) {
+    $secure = ConvertTo-SecureString $Password -AsPlainText -Force
+} else {
+    Write-Log "No password supplied (use -Password, or pipe one via stdin)." "Red"
+    exit 1
+}
+
 # ── Create the account ────────────────────────────────────────────────────────
 Write-Log "Creating AD account..." "Cyan"
 try {
@@ -76,7 +87,7 @@ try {
         GivenName             = $FirstName
         Surname               = $LastName
         DisplayName           = $displayName
-        AccountPassword       = (ConvertTo-SecureString $Password -AsPlainText -Force)
+        AccountPassword       = $secure
         Enabled               = $true
         ChangePasswordAtLogon = $true
         Path                  = $ou

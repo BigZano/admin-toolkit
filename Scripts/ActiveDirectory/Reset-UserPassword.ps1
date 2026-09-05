@@ -3,8 +3,8 @@
 param(
     [Parameter(Mandatory=$true)]
     [string]$Username,
-    [Parameter(Mandatory=$true)]
-    [string]$NewPassword,
+    [Parameter(Mandatory=$false)]
+    [string]$NewPassword = "",
     [Parameter(Mandatory=$false)]
     [string]$ForceChangeAtLogon = "true"
 )
@@ -40,8 +40,20 @@ if (-not $mustChange -and $ForceChangeAtLogon -notin @("false", "0")) {
     Write-Log "Unrecognized ForceChangeAtLogon value '$ForceChangeAtLogon' — treating as false." "Yellow"
 }
 
-try {
+if (-not $NewPassword -and [Console]::IsInputRedirected) {
+    # Piped by the TUI: build the SecureString directly from stdin so a
+    # full plaintext copy of the password never exists in this process.
+    $securePassword = New-Object System.Security.SecureString
+    while (($ch = [Console]::In.Read()) -notin -1, 13, 10) { $securePassword.AppendChar([char]$ch) }
+    $securePassword.MakeReadOnly()
+} elseif ($NewPassword) {
     $securePassword = ConvertTo-SecureString $NewPassword -AsPlainText -Force
+} else {
+    Write-Log "No new password supplied (use -NewPassword, or pipe one via stdin)." "Red"
+    exit 1
+}
+
+try {
     Set-ADAccountPassword -Identity $Username -NewPassword $securePassword -Reset -ErrorAction Stop
 } catch {
     Write-Log "Failed to reset password: $($_.Exception.Message)" "Red"
