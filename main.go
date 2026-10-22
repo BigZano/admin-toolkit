@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 
@@ -857,6 +858,13 @@ func clamp(v, lo, hi int) int {
 }
 
 func findScriptsDir() string {
+	// Explicit override so an installed binary can run from any directory
+	if home := os.Getenv("ADMIN_TOOLKIT_HOME"); home != "" {
+		p := filepath.Join(home, "Scripts")
+		if st, err := os.Stat(p); err == nil && st.IsDir() {
+			return p
+		}
+	}
 	// Prefer CWD/Scripts (dev mode via `go run`)
 	if _, err := os.Stat("Scripts"); err == nil {
 		abs, _ := filepath.Abs("Scripts")
@@ -865,6 +873,14 @@ func findScriptsDir() string {
 	// Fallback: next to the binary
 	if exe, err := os.Executable(); err == nil {
 		p := filepath.Join(filepath.Dir(exe), "Scripts")
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
+	}
+	// Last resort: the source tree this binary was built from, so a
+	// `go install`ed binary works from any directory on the build machine.
+	if _, file, _, ok := runtime.Caller(0); ok {
+		p := filepath.Join(filepath.Dir(file), "Scripts")
 		if _, err := os.Stat(p); err == nil {
 			return p
 		}
@@ -879,7 +895,9 @@ func main() {
 	reg := NewRegistry(scriptsDir)
 
 	if reg.Total() == 0 {
-		fmt.Fprintf(os.Stderr, "No scripts found in %s\n", scriptsDir)
+		abs, _ := filepath.Abs(scriptsDir)
+		fmt.Fprintf(os.Stderr, "No scripts found in %s\n", abs)
+		fmt.Fprintln(os.Stderr, "Run from the repo root, or place a Scripts folder next to the executable.")
 		os.Exit(1)
 	}
 

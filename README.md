@@ -68,6 +68,17 @@ go build -o admin-toolkit.exe
 .\admin-toolkit.exe
 ```
 
+To run it as a command from any directory, install it and point it at the repo:
+
+```powershell
+go install .
+[Environment]::SetEnvironmentVariable("ADMIN_TOOLKIT_HOME", (Get-Location).Path, "User")
+```
+
+Open a new shell and run `admin-toolkit`. This needs `%USERPROFILE%\go\bin` on your `PATH`
+(the Go installer adds it). Without `ADMIN_TOOLKIT_HOME`, the tool looks for `Scripts` in the
+current directory, then next to the executable.
+
 For development you can also run without building:
 
 ```powershell
